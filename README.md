@@ -17,6 +17,14 @@ Eight skills implement a full task lifecycle for AI agents — research → desi
 | **[next-task](next-task/)** | Continuation dispatcher: orient from state, route by stage | "work on next task", "continue" |
 | **[bootstrap-context](bootstrap-context/)** | Scoped README roll-up (monorepo-safe) + `.agent/` init | per subtree, on demand |
 
+### Domain skills
+
+Standalone reference skills, unrelated to the task lifecycle above.
+
+| Skill | Role | Typical trigger |
+|---|---|---|
+| **[html-in-canvas](html-in-canvas/)** | Consult the local WICG HTML-in-Canvas spec, then build with `<canvas layoutsubtree>` / `drawElementImage` / `onpaint` — reads the spec every time since the API is new and undocumented | "render HTML in a canvas", "replace html2canvas", "DOM as a WebGL texture" |
+
 ## Shared state — the actual memory
 
 Skills are stateless instructions; all persistence lives in one git-committed folder:
