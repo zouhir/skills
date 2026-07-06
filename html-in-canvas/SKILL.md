@@ -7,16 +7,16 @@ description: Use the WICG HTML-in-Canvas browser API (`<canvas layoutsubtree>`, 
 
 A dev-trial Chromium API (Chrome Canary + Brave Stable on Chromium 147+) that lets `<canvas>` paint its own real DOM children. The browser handles layout, text shaping, accessibility, focus, and hit-testing for the children; the canvas draws their cached paint records as pixels — composable with all existing 2D / WebGL / WebGPU operations.
 
-This API is new and there is very little public documentation. **The authoritative source is the local spec, not your training data.** Do not rely on memory for signatures, behaviors, or timing — read the spec first, every time.
+This API is new and there is very little public documentation. **The authoritative source is the bundled spec, not your training data.** Do not rely on memory for signatures, behaviors, or timing — read the spec first, every time.
 
 ## STEP 0 — Read the spec before writing any code (do this every time)
 
-Before writing, editing, or reviewing any HTML-in-Canvas code, read the relevant spec files. They are the source of truth and are continuously updated.
+Before writing, editing, or reviewing any HTML-in-Canvas code, read the relevant spec files. They are the source of truth. They ship inside this skill, so this step works on any machine — no external checkout required.
 
-**Primary source (freshest) — the local spec repo:**
+**Source — bundled with this skill, relative to `SKILL.md`:**
 
 ```
-~/Projects/html-in-canvas-dot-dev/spec/
+references/spec/
 ├── overview.md          # the 3 primitives + helper, synchronization, privacy, paint timing
 ├── api-reference.md     # exact IDL, all drawElementImage overloads, ElementImage, PaintEvent
 ├── design-decisions.md  # why the API is shaped this way (transforms ignored, Option C, etc.)
@@ -27,7 +27,7 @@ Before writing, editing, or reviewing any HTML-in-Canvas code, read the relevant
 
 Read `overview.md` + `api-reference.md` at minimum. Add the others as the task warrants (3D → examples-analysis, "why doesn't X work" → open-questions + design-decisions).
 
-**Fallback (if that path is unavailable, e.g. this skill was copied to another machine):** a snapshot of the same six files lives in `references/spec/` inside this skill. Read those instead. They may lag the primary source — prefer the primary path when it exists.
+**Staying current:** this spec is a snapshot. The upstream source is the `html-in-canvas-dot-dev` repo (`spec/` directory); if a local checkout exists at `~/Projects/html-in-canvas-dot-dev/spec/`, you may cross-check it for newer content and, if it has diverged, refresh `references/spec/` from it and tell the user. But never *require* that path — the bundled copy is always sufficient to answer.
 
 Match your answer to what the spec actually says. If the spec and the quick reference below ever disagree, the spec wins — and flag the discrepancy to the user.
 
@@ -134,7 +134,7 @@ Field-testing on some builds showed the opposite failure mode (DPR-scaling the b
 
 ## Self-check before reporting done
 
-- [ ] I read the current spec (`~/Projects/html-in-canvas-dot-dev/spec/` or `references/spec/`) for this task, not just memory.
+- [ ] I read the bundled spec (`references/spec/`) for this task, not just memory.
 - [ ] Canvas has `layoutsubtree`; drawn elements are *direct* children of it.
 - [ ] An `onpaint` (or `addEventListener('paint', …)`) handler exists.
 - [ ] Animation / state changes call `canvas.requestPaint?.()`.
@@ -147,6 +147,6 @@ Field-testing on some builds showed the opposite failure mode (DPR-scaling the b
 
 ## References in this skill
 
-- `references/spec/` — snapshot of the six local spec files. **Prefer the live `~/Projects/html-in-canvas-dot-dev/spec/` path when it exists** (it's continuously updated); use this snapshot only as a fallback.
+- `references/spec/` — the six spec files, bundled with this skill. This is the source of truth and works on any machine; read it directly. It's a snapshot of the upstream `html-in-canvas-dot-dev` `spec/` directory — see "Staying current" under STEP 0 for how to refresh it if a newer local checkout is available.
 
-When editing demos inside `~/Projects/html-in-canvas-dot-dev/` itself, also follow that repo's `CLAUDE.md` (dual standalone/shadow-root authoring, `npm run check`, Playwright per changed demo).
+When editing demos inside a local `html-in-canvas-dot-dev` checkout itself, also follow that repo's `CLAUDE.md` (dual standalone/shadow-root authoring, `npm run check`, Playwright per changed demo).
