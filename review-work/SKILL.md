@@ -19,17 +19,22 @@ Task folder: `.agent/tasks/<slug>/` — read `02-criteria.md`, `03-design.md`, `
 
 **Pass 3 — Design conformance.** Compare the implementation against `03-design.md` §4 and the backlog's per-step `what`. Files changed that the design never mentions, or design claims the code contradicts, are findings — each one either gets fixed in code or recorded in the design (see implement-step's deviation rules). Undocumented drift is how docs rot into fiction.
 
-## Classify, fix, loop
+## Classify, adjudicate, loop — bounded
 
-Sort findings into **must-fix** / **should-fix** / **nitpick**. Fix the first two categories (fixes follow implement-step discipline: journal entries, recorded deviations), then re-run the passes with a fresh critic. The loop's stop condition: a round produces only nitpicks.
+Require the critic to classify every finding, anchored to the artifacts, and to skip anything already adjudicated in `06-verification.md`: **MUST-FIX** — violates an acceptance criterion (name it) or is a correctness/security defect; **SHOULD-FIX** — a maintainer or implementer would be misled without it; **NITPICK** — preference. A finding with no named criterion or concrete consequence is a NITPICK by definition.
 
-Record every round:
+Then adjudicate yourself: fix MUST-FIX and worthwhile SHOULD-FIX items (fixes follow implement-step discipline: journal entries, recorded deviations); reject the rest **with a written rationale in the verification log** so the next fresh critic cannot re-raise them. A fresh critic will always find *something* — absorbing every finding is churn, not convergence.
+
+Stop condition: a round produces **no new MUST-FIX or SHOULD-FIX findings**. Budget: **3 rounds**. If round 3 still surfaces new must-fixes, stop looping — that signals a design-level problem or genuinely unstable code; escalate to the human with the open findings and your read on the root cause.
+
+Record every round, including rejections:
 
 ```markdown
 ## <date> — review round 2
 Criteria: 7/8 pass (criterion 5: no benchmark evidence yet)
-Findings: 1 must-fix (unhandled 401 path), 3 nitpicks
-Action: fixed 401 path in middleware.ts; round 3 scheduled
+Findings: 1 MUST-FIX (unhandled 401 path), 2 SHOULD-FIX, 3 NITPICK
+Adjudication: fixed 401 path in middleware.ts; rejected S2 (duplicate of
+Alternatives §3 decision); S1 deferred to backlog as new step
 ```
 
 ## Close out

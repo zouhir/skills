@@ -52,11 +52,17 @@ A doc is only proven complete when a **zero-context** reader can act on it. Run 
 
 **Gate 1 — Comprehension.** Prompt the subagent: "Read `.agent/tasks/<slug>/03-design.md` and the files it references. Explain what it is trying to accomplish and how the current system works as it relates to this change." If its explanation has gaps or errors, the doc is missing context. Fix the doc, rerun. Do not skip this loop.
 
-**Gate 2 — Critic.** Fresh subagent: "Assume the role of an expert technical reviewer. Read this design doc and the files it references. List everything missed: faulty assumptions, edge cases, failure modes, security concerns, things that should have been considered. Every mistake you find makes you more useful." Expect roughly a third of findings to be valuable. Incorporate those, rerun until findings are consistently nitpicks.
+**Gate 2 — Critic.** Fresh subagent: "Assume the role of an expert technical reviewer. Read this design doc, the files it references, `02-criteria.md`, and `06-verification.md`. Do not re-raise anything listed in the doc's Alternatives section or already adjudicated in the verification log — those are settled. Classify every finding as exactly one of: **CRITICAL** — the design fails a specific acceptance criterion (name it) or cannot be implemented as written; **MAJOR** — an implementer would have to guess something the doc should state; **MINOR** — an improvement or preference. Findings without a classification and a concrete consequence don't count."
 
-**Gate 3 — Readiness.** Fresh subagent: "You are an engineer experienced with this codebase. Read this doc and the files it references. Does it contain absolutely everything you need to implement this correctly on the first pass? List every missing piece of information." Answer its questions **in the doc**, not in chat. Rerun until clean.
+Then **adjudicate** — this is your judgment call, not the critic's: for each CRITICAL/MAJOR, either fix the doc, or reject it with a written rationale added to the doc's Alternatives section (so the next fresh critic sees it and cannot re-raise it). MINORs: batch-apply the worthwhile ones once, log the rest. Expect only a fraction of findings to deserve fixes — a critic that produces findings is doing its job; a doc that absorbs every finding is not converging, it's churning.
 
-Record every round in `06-verification.md`:
+**Gate 3 — Readiness.** Fresh subagent: "You are an engineer experienced with this codebase. Read this doc and the files it references. Does it contain absolutely everything you need to implement this correctly on the first pass? List every missing piece of information." Answer its questions **in the doc**, not in chat.
+
+### Convergence rules (all gates)
+
+A fresh critic can generate findings forever — zero findings is not a reachable state, so it is not the stop condition. A gate **passes** when a round produces **no new CRITICAL or MAJOR findings** (new = not already fixed or rejected-with-rationale). Budget: **3 rounds per gate**. If a gate hasn't passed by round 3, stop looping and escalate: present the open findings and your recommendation to the human, and let them decide. The budget isn't a concession — it forces the judgment call back to a person instead of laundering it through repetition.
+
+Record every round — including adjudications — in `06-verification.md`. Rejections recorded here (and mirrored in the doc's Alternatives) are what stop the next fresh critic from re-litigating:
 
 ```markdown
 # Verification log: <title>
@@ -65,6 +71,12 @@ Record every round in `06-verification.md`:
 Result: FAIL — didn't understand auth flow; added §2 diagram + auth.ts reference
 ## <date> — design gate 1, round 2
 Result: PASS
+## <date> — design gate 2 (critic), round 1
+Findings: 2 CRITICAL, 4 MAJOR, 5 MINOR
+Adjudication: fixed C1,C2,M1,M3; rejected M2 (conflicts with criterion 4 — rationale
+in Alternatives); rejected M4 (out of scope, see Non-goals); 2 MINORs applied
+## <date> — design gate 2, round 2
+Findings: 0 CRITICAL, 0 new MAJOR → PASS
 ```
 
 ## Step 5 — Human sign-off and close out

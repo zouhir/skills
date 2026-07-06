@@ -81,12 +81,14 @@ This repo tracks agent work in .agent/ (see .claude/skills/).
   that directory's README.md file list (if READMEs exist).
 ```
 
+(In Claude Code you can go further with a `SessionStart` hook that injects `.agent/index.md` — the only guaranteed mechanism. The CLAUDE.md rule is sufficient in practice.)
+
 ## Design rules the skills enforce
 
 - **Write-ahead journaling:** intent is journaled before code is touched, so a dead session is reconstructable from journal + `git diff`.
 - **Two legal exits only:** every implementation session ends `done` (journaled, committed) or `blocked` (journaled, nothing half-applied). Anything not written down never happened.
 - **Plan mutable only through recorded edits:** a deviation that affects future steps updates the design + backlog *now* — future sessions read the plan, not old chats.
-- **Fresh-context verification:** design gates and reviews run in zero-context subagents, because the session that wrote something can't neutrally judge it.
+- **Fresh-context verification, bounded:** design gates and reviews run in zero-context subagents, because the session that wrote something can't neutrally judge it. Critic loops are budgeted (3 rounds) with severity anchored to acceptance criteria; rejected findings are recorded so later critics can't re-litigate. Convergence = no new critical/major findings, never zero findings.
 
 ## Install
 
