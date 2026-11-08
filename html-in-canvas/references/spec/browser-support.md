@@ -5,50 +5,66 @@ order: 6
 
 # Browser Support
 
-_Auto-synced from [`WICG/html-in-canvas` README](https://github.com/WICG/html-in-canvas/blob/main/README.md) on 2026-04-14 via `scripts/sync-spec-docs.mjs`._
+_Checked against Chromium source (`chrome/VERSION` 159 trunk and the M157 release branch `branch-heads/8103`), chromestatus, and the [`WICG/html-in-canvas` README](https://github.com/WICG/html-in-canvas/blob/main/README.md) on 2026-11-07._
 
 ## Status
 
-This is a living explainer which is continuously updated as we receive feedback.
+- **Chrome 157+ (stable 2026-11-03): enabled by default.** No flags. Chromium flipped the `CanvasDrawElement` runtime feature to `status: "stable"` in commit `e6d4a6c87` (2026-10-09, after an approved Intent to Ship; [crbug 500967896](https://crbug.com/500967896), [chromestatus 5172548013916160](https://chromestatus.com/feature/5172548013916160)).
+- **Spec:** still a WICG explainer. The HTML spec PR [whatwg/html#11588](https://github.com/whatwg/html/pull/11588) is open, so details can still change.
+- Upstream removed the "Developer Trial Information" section from the README on 2026-10-30 (`5d9d970`), and closed the two pinned breaking-change announcements (#174, #179) on 2026-11-05. The migration period is over.
 
-The APIs described here are implemented behind a flag in Chromium and can be enabled with `chrome://flags/#canvas-draw-element`.
+## Timeline
 
-## Developer Trial (dev trial) Information
-The HTML-in-Canvas features may be enabled with `chrome://flags/#canvas-draw-element` in Chrome Canary.
+| Chrome | What shipped |
+|---|---|
+| M138 | Developer trial begins (behind `chrome://flags/#canvas-draw-element`). Old API shape. |
+| M148–M150 | Origin trial (`HTMLInCanvas`). Old API shape. |
+| ~M154–M156 (Canary/Dev, Aug–Oct 2026) | Transitional: the new API shape landed piecemeal behind **both** `#canvas-draw-element` and `#enable-experimental-web-platform-features`, with old names kept as fallbacks. |
+| M157 (2026-11-03) | Enabled by default. **Only the new shape.** `layoutsubtree`, the `DOMMatrix` return value, `getElementTransform(el, drawTransform)`, `texElementImage2D`, `copyElementImageToTexture`, and `ElementImage.width/height` are all gone. |
 
-We are most interested in feedback on the following topics:
-* What content works, and what fails? Which failure modes are most important to fix?
-* How does the feature interact with accessibility features? How can accessibility support be improved?
+## Verified API surface in Chrome 157
 
-Please file bugs or design issues [here](https://github.com/WICG/html-in-canvas/issues/new).
+Read from the M157 branch IDL. It matches the explainer at `5d9d970`:
 
-## How to try it
+- `HTMLCanvasElement`: `content` (`"fallback"` | `"drawable"`), `onpaint`, `onelementgeometryupdate`, `requestPaint()`, `getElementImageDefaultSize()`, `getElementTransform()`, `captureElementImage()`, `updateElementGeometry()`, `clearElementGeometry()`
+- `OffscreenCanvas`: `getElementImageDefaultSize()`, `updateElementGeometry()`, `clearElementGeometry()`
+- `CanvasRenderingContext2D` / `OffscreenCanvasRenderingContext2D`: the four `drawElementImage` overloads
+- `UpdateElementGeometryOptions`: `preserveHitTestOrder`, `canvasClip`, `canvasTransform`
+- `ElementImage`: `close()` only
+- WebGL: `texElementSubImage2D`. WebGPU: `GPUQueue.drawElementImageToTexture`
+- `CanvasPaintEvent.changedElements`, `ElementGeometryUpdateEvent.elements`
 
-You can run the demos on either Chrome Canary or a current Brave Stable — the flag lives in Chromium and rides along with any fork whose base milestone includes it.
+## API generations in the wild
 
-### Option A — Chrome Canary
+| Build | Canvas opt-in | Drawn elements | `drawElementImage` returns | Texture sizing | WebGL | WebGPU |
+|---|---|---|---|---|---|---|
+| Old (≤ ~M153 behind flags, and the M148–150 origin trial; e.g. Chromium 147, Brave 1.89) | `layoutsubtree` | direct children only | `DOMMatrix` (write to `style.transform`) | `ElementImage.width/height` | `texElementImage2D` | `copyElementImageToTexture` |
+| Transitional (~M154–M156 behind flags) | `content="drawable"` | `drawable` attr, nestable | `undefined` (auto geometry) | `ElementImage.width/height` | `texElementSubImage2D` | `drawElementImageToTexture` |
+| **Chrome 157+ (current)** | `content="drawable"` | `drawable` attr, nestable | `undefined` (auto geometry) | `getElementImageDefaultSize(el)` | `texElementSubImage2D` | `drawElementImageToTexture` |
 
-1. Install [Chrome Canary](https://www.google.com/chrome/canary/).
-2. Visit `chrome://flags/#canvas-draw-element` and enable the flag.
-3. Restart the browser.
-4. Load any demo from the [demo gallery](/demos/).
+Feature-detect:
 
-### Option B — Brave Stable (Chromium 147+)
+```js
+const supported = 'drawElementImage' in CanvasRenderingContext2D.prototype;
+const isCurrentApi = 'getElementImageDefaultSize' in HTMLCanvasElement.prototype; // Chrome 157+ shape
+```
 
-Confirmed working on [Brave](https://brave.com/) Stable 1.89.132 / Chromium 147.0.7727.56. Older builds may not expose the flag.
-
-1. Update Brave to a current Stable build (Menu → Brave → About Brave triggers an update).
-2. Visit `brave://flags/#canvas-draw-element` and enable the flag.
-3. Restart the browser.
-4. Load any demo from the [demo gallery](/demos/).
+The official demos still write `<canvas content="drawable" layoutsubtree>` and keep `try/catch` fallbacks to the old names. Chrome 157 ignores `layoutsubtree`. Only add it, or the fallbacks, if the user explicitly needs pre-157 builds.
 
 ## Other browsers
 
-- **Brave:** supported on recent Stable builds (≥ 1.89.132 / Chromium 147) behind `brave://flags/#canvas-draw-element`.
-- **Firefox:** no implementation announced.
-- **Safari / WebKit:** no implementation announced.
-- **Edge / other Chromium forks:** the flag rides along wherever the underlying Chromium milestone has shipped the canvas-draw-element code. Try `chrome://flags/#canvas-draw-element` (or the fork's equivalent) on a recent build.
+- **Edge / Opera / other Chromium forks:** follow their Chromium milestone. On by default once they're on Chromium 157.
+- **Brave:** same, once its Chromium base reaches 157. Older Brave (e.g. 1.89 on Chromium 147) has only the old API behind `brave://flags/#canvas-draw-element`.
+- **Firefox:** not implemented. Position request [mozilla/standards-positions#1076](https://github.com/mozilla/standards-positions/issues/1076) is open, with no position yet.
+- **Safari / WebKit:** not implemented. Position request [WebKit/standards-positions#630](https://github.com/WebKit/standards-positions/issues/630) is open, with no position yet.
+
+Production code must feature-detect and keep a non-canvas fallback (plain DOM) for Firefox, Safari, and older Chromium.
 
 ## Feedback
 
-Browser vendors and contributors track discussion at <https://github.com/WICG/html-in-canvas/issues> — see the [Open Questions](/docs/open-questions/) page for the current list.
+- API feedback: https://github.com/WICG/html-in-canvas/issues/new
+- Chromium implementation bugs: https://issues.chromium.org/issues/new?component=1456440&template=0
+
+## Live demos
+
+https://wicg.github.io/html-in-canvas/Examples/ (complex-text, pie-chart, nested-sparkles, webGL, webgpu-jelly-slider)

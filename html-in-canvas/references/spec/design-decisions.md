@@ -5,87 +5,74 @@ order: 3
 
 # Design Decisions & Rationale
 
-## Why `layoutsubtree` as an attribute?
+## Why `content="drawable"` instead of `layoutsubtree`?
 
-The attribute serves as an explicit opt-in. Without it, canvas children are fallback content (for accessibility when canvas isn't supported). With it, children are promoted to first-class participants in layout and hit testing, but remain invisible until drawn.
+The opt-in is now an enumerated attribute: `content="fallback"` (default) or `content="drawable"`. It names what the attribute controls (how canvas content is treated) and leaves room for more modes later. Without it, canvas descendants are classic fallback content. With it, they're laid out, take part in accessibility, and become hit-testable once their geometry is set. They stay invisible until drawn.
 
-This dual role is key: the same elements serve as both the visual content (when drawn) and the accessibility tree. They're not separate — they're one and the same.
+The dual role is unchanged: the drawn elements *are* the accessibility tree, so the two can't drift apart.
 
-## Why CSS transforms on source elements are ignored
+## Why a per-element `drawable` attribute (instead of "direct children only")?
 
-When drawing an element, the canvas CTM controls positioning. If CSS transforms were also applied, you'd get double-positioning — the element's own CSS transform would compound with the canvas transform.
+The old API only let you draw direct children of the canvas. That forced authors to flatten their markup into an unrelated list of top-level elements, which broke semantics like `<figure>` → `<img>` + `<figcaption>`.
 
-Instead, CSS transforms are reserved for the synchronization step: after drawing, you set `element.style.transform` to the value returned by `drawElementImage()` so that the DOM position matches the drawn position. This separation keeps drawing and synchronization clean.
+`drawable` fixes this:
+- **Natural DOM structure.** Draw any descendant and keep semantic wrappers. Wrappers don't need `drawable` themselves.
+- **Drawing flexibility.** Each drawable is captured independently, so it isn't constrained by its ancestors' stacking or clipping. Drawing an element captures its subtree *except* nested drawables, so nested parts can be drawn or animated separately (see the `nested-sparkles` demo).
+- **Explicit intent.** The browser knows exactly which elements need snapshots.
 
-**Important consequence:** Changing an element's CSS transform does NOT trigger a `paint` event, because transforms don't affect the element's painted output (only its position).
+`drawable` implies `isolation: isolate` and a containing block for descendants, so each drawable's rendering is self-contained.
+
+## Why CSS transforms on source elements are ignored for drawing
+
+Drawing starts at the border box *before* CSS transforms. The canvas CTM controls placement. Applying CSS transforms too would double-position the element. The drawn position is tracked separately as the element's **canvas element transform**, which is geometry state, not a CSS property.
+
+## Why automatic geometry instead of returning a `DOMMatrix`?
+
+Previously `drawElementImage` returned a `DOMMatrix` and authors had to write it back to `element.style.transform`. This had problems:
+- It was easy to forget, which silently broke hit testing, selection, and a11y bounds.
+- It overloaded the author-visible `transform` style, which conflicts with real CSS transforms and the transform-origin math.
+- It said nothing about **layer order**, which hit testing needs (issue #94).
+
+Now each drawable has internal geometry state (canvas transform, hit-test clip, position in the canvas's hit-test stack). In 2D, `drawElementImage` sets this automatically. Later draws go on top, matching the painter's order. `{ preserveElementGeometry: true }` opts out for custom cases.
+
+3D contexts can't be automatic because the texture-to-screen mapping lives in the author's shaders. So `updateElementGeometry` is public, and WebGL/WebGPU callers pass a `canvasTransform`.
+
+Geometry state doesn't affect rendering, so changing it never fires `paint`.
+
+## Why batch OffscreenCanvas geometry updates?
+
+Workers can't touch the DOM synchronously. Geometry updates from an `OffscreenCanvas` are queued, batched in a microtask, posted to the main thread, and applied atomically. Then `elementgeometryupdate` fires. Batching (like observer APIs) means no other task sees a half-applied set of updates. It also replaces the old pattern where the worker posted transforms back by hand.
+
+## Why `texElementSubImage2D` (sub-image) rather than `texElementImage2D`?
+
+Raised in issue #33 (greggman). `texImage2D` both allocates and uploads, so it can't target immutable `texStorage2D` textures, which are more efficient. The sub-image form only uploads: you allocate once (sized from `canvas.getElementImageDefaultSize(el)`), upload repeatedly, and can place the element at an `xoffset`/`yoffset` inside a larger atlas.
+
+## Why `drawElementImageToTexture` with dictionaries (WebGPU)?
+
+It was renamed from `copyElementImageToTexture` and reshaped into `GPUDrawElementImageSource` / `GPUDrawElementImageDestination` dictionaries, matching WebGPU conventions (`copyExternalImageToTexture`-style `source` / `texture` / `size`). "Draw" signals that it rasterizes a snapshot rather than copying existing texels.
 
 ## Why `paint` fires after Paint (Option C)
 
-Three options were considered for when the `paint` event fires:
+- **Option A (resize-observer timing, looping):** would need a synchronous Paint of drawables (expensive, hard in Gecko) or placeholder recording. Placeholders deadlock WebGL, because many GL calls like `getError()` force a flush.
+- **Option B (after Paint, looping):** even more rendering steps per loop.
+- **Option C (after Paint, once per frame), chosen:** the rendering update is locked in before `paint` runs, except for the canvas's own drawn content. DOM changes made in `paint` apply to the *next* update.
 
-**Option A — Resize observer timing (looping):** Would require synchronous Paint of canvas children, which is expensive and has implementation challenges in Gecko. Also, WebGL APIs like `getError()` would cause deadlocks when flushing.
+Events fire in reverse tree order (and child frames before parents), so inner drawables and nested canvases are up to date before outer ones draw them.
 
-**Option B — After Paint with looping:** Even more expensive — more rendering steps run per loop iteration.
+## Why `captureElementImage` for workers?
 
-**Option C — After Paint, no looping (chosen):** Runs once per frame. DOM changes during paint apply to the next frame. This mirrors the browser's own Paint step behavior. The key insight: by the time paint fires, the rendering update is locked in, except for the canvas content itself.
+Workers have no DOM. A transferable `ElementImage` snapshot fits the `ImageBitmap` pattern. Workers pass it wherever an `Element` is accepted, and from a worker only `ElementImage` may be passed to `updateElementGeometry`.
 
-## Why `drawElementImage` returns a DOMMatrix
+## Why `getElementImageDefaultSize()` instead of `ElementImage.width/height`?
 
-Returning the synchronization transform directly from the draw call makes the common pattern trivial:
+Sizing used to require capturing a snapshot (`captureElementImage(el).width`) even on the main thread, just to allocate a texture. In Oct 2026 the size moved to a canvas method, `getElementImageDefaultSize(Element or ElementImage)`, on both `HTMLCanvasElement` and `OffscreenCanvas`, and `ElementImage` was reduced to `close()`. You can now size directly from the element, and workers can still ask with an `ElementImage`. In the same change, `clip` was renamed `canvasClip` to match `canvasTransform`.
 
-```js
-element.style.transform = ctx.drawElementImage(element, x, y).toString();
-```
+## Why not `foreignObject` or `html2canvas`?
 
-The alternative would be a separate `getElementTransform()` call (which exists for WebGL/WebGPU where the transform isn't a simple 2D operation).
+`foreignObject` lives in SVG's rendering model, with no canvas CTM, WebGL, or WebGPU integration, and it isn't interactive. `html2canvas`-style libraries re-implement rendering in JS, so they're incomplete, slow, inaccurate, heavy, and static. HTML-in-Canvas uses the real engine and keeps interactivity.
 
-## Why direct children only?
+## Privacy model (read-back-allowed rendering)
 
-Restricting to direct children keeps the API simple and the containment model clear. Each drawn element has paint containment, is a containing block for its descendants, and has a stacking context. This means:
+WebGL and WebGPU always allow pixel read-back, so anything drawn must already be observable by script. Both pixels and `paint` timing are covered. Cross-origin content, system colors/themes, spelling markers, visited links, pending autofill, subpixel AA, captions/video controls, and IME UI are excluded. Form-control appearance, caret blink rate, find-in-page markers, and `forced-colors` are considered already observable.
 
-- The element's rendering is self-contained
-- Overflow is predictable (clipped to border box)
-- Z-ordering within the element follows normal CSS rules
-- The canvas author controls the ordering of top-level elements
-
-## Why `captureElementImage` instead of direct worker access?
-
-Workers can't access the DOM. Rather than creating a complex proxy mechanism, the design captures a snapshot as a transferable `ElementImage` object. This fits the existing `Transferable` pattern (like `ImageBitmap`) and keeps the worker API simple — workers just call `drawElementImage()` with an `ElementImage` instead of an `Element`.
-
-The trade-off: you need main-thread code to capture and transfer, and the transform needs to be communicated back to the main thread for synchronization.
-
-## Why not `foreignObject`?
-
-SVG `foreignObject` already allows HTML in a graphics context, but:
-
-1. It runs in the SVG rendering model, not the canvas model
-2. No access to canvas 2D API transforms
-3. No WebGL/WebGPU integration
-4. Can't use canvas pixel manipulation
-5. Performance characteristics differ
-6. No `requestAnimationFrame`-style control
-
-HTML-in-Canvas is designed for the canvas use case specifically.
-
-## Why not `html2canvas`?
-
-Libraries like `html2canvas` re-implement browser rendering in JavaScript. They're:
-
-1. Incomplete — can't handle all CSS
-2. Slow — re-parsing and re-rendering
-3. Inaccurate — miss browser-specific rendering
-4. Large — significant JS payload
-5. Not interactive — produce static snapshots
-
-HTML-in-Canvas uses the browser's actual rendering engine, so it's complete, fast, accurate, small, and supports full interactivity.
-
-## Privacy model
-
-The design follows a principle of not exposing information that isn't already available to JavaScript. Cross-origin content, system themes, visited links, spell-check indicators, and autofill previews are all excluded from painting.
-
-The key insight: since `drawElementImage` makes pixels readable via `getImageData()`, anything drawn must be "same-origin-equivalent" safe. This is the same security model as tainted canvases, applied proactively.
-
-Some new information IS exposed:
-- Form control rendering (already detectable via foreignObject)
-- Caret blink rate (low-entropy)
-- forced-colors mode (already queryable via media query)
+The captions/video-controls exclusion is being reconsidered (issue #165): authors may just switch to JS players that ignore user caption preferences.

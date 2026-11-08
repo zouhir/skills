@@ -5,136 +5,173 @@ order: 1
 
 # HTML-in-Canvas Spec Overview
 
-**Source:** https://github.com/WICG/html-in-canvas  
-**Status:** Living explainer, continuously updated. Dev trial behind `chrome://flags/#canvas-draw-element` in Chrome Canary, and also available in recent Brave Stable builds (≥ 1.89.132 / Chromium 147) at `brave://flags/#canvas-draw-element`.  
-**Authors:** Philip Rogers (pdr@chromium.org), Stephen Chenney (Igalia), Chris Harrelson, Philip Jagenstedt, Khushal Sagar, Vladimir Levin, Fernando Serboncini (all Chromium)
+**Source:** https://github.com/WICG/html-in-canvas (synced 2026-11-07, upstream `5d9d970`; cross-checked against Chromium M157 IDL)  
+**Status:** Living explainer, continuously updated. HTML spec PR [whatwg/html#11588](https://github.com/whatwg/html/pull/11588) is open. **Enabled by default in Chrome 157+** (stable 2026-11-03), with no flags. Not in Firefox or Safari. See `browser-support.md`.  
+**Authors:** Philip Rogers, Stephen Chenney (Igalia), Chris Harrelson, Philip Jägenstedt, Stefan Zager, Khushal Sagar, Vladimir Levin, Fernando Serboncini
+
+> **API changed in Aug–Sep 2026.** `layoutsubtree` → `content="drawable"`. A `drawable` attribute is now required on drawn elements. `drawElementImage` returns `undefined` and syncs geometry automatically. WebGL/WebGPU methods were renamed. `PaintEvent` → `CanvasPaintEvent`. **Oct 2026:** `ElementImage.width/height` were removed in favor of `canvas.getElementImageDefaultSize(el)`, and the geometry option `clip` was renamed `canvasClip`. See "Migrating from the old API" below.
 
 ## Problem
 
-There is no web API to render complex HTML layouts into a `<canvas>`. Canvas-based content (games, charts, creative tools, 3D scenes) suffers in:
-
-- **Accessibility** — canvas fallback content doesn't reliably match what's rendered
-- **Internationalization** — canvas text APIs can't handle RTL, vertical text, complex scripts
-- **Performance** — developers resort to `html2canvas`-style hacks (slow, incomplete)
-- **Quality** — `ctx.fillText()` can't match browser-rendered text with fonts, ligatures, subpixel rendering
+There is no web API to render complex HTML layouts into a `<canvas>`. As a result, canvas-based content suffers in accessibility, internationalization, performance, and quality.
 
 ## Use Cases
 
-1. **Styled, laid-out content in canvas** — chart labels, rich text boxes in creative tools, in-game menus
-2. **Accessibility** — drawn elements ARE the fallback content, so they always match
-3. **HTML + WebGL shaders** — apply general GPU effects to HTML elements
-4. **HTML in 3D** — render rich 2D content as textures in 3D scenes
-5. **Media export** — export HTML content as images or video via canvas
+1. **Styled, laid-out content in canvas**: chart legends/axes, rich text boxes in creative tools, in-game menus
+2. **Accessibility**: no more hand-syncing an auxiliary DOM subtree with canvas draw calls
+3. **Composing HTML with effects**: general WebGL shaders on HTML, beyond CSS filters/blend modes
+4. **HTML in 3D**: rich 2D content on surfaces in a 3D scene
+5. **Media export**: HTML content to images or video
 
-## Solution: Three Primitives + One Helper
+## Solution: Five Primitives
 
-### 1. `layoutsubtree` attribute
+### 1. The canvas `content` attribute
 
-An attribute on `<canvas>` that opts its direct children into layout and hit testing.
+`content="fallback"` (default) treats canvas descendants as fallback content. `content="drawable"` opts descendants into layout.
 
 ```html
-<canvas layoutsubtree>
-  <div id="content">I'm laid out but invisible until drawn</div>
+<canvas content="drawable">
+  <div drawable id="label">Laid out, but invisible until drawn</div>
 </canvas>
 ```
 
-Children behave as if visible (participate in layout, hit testing, accessibility tree) but their rendering is NOT visible to the user until explicitly drawn via `drawElementImage()`.
+- The canvas **blockifies** its immediate children, and they're laid out with static positioning.
+- Descendants are in the accessibility tree like regular DOM (and respect `aria-hidden`, `inert`, etc.). Until their geometry is set, they're exposed **without geometry**.
+- Descendants are **not hit-testable** until their geometry is set (automatically by a 2D draw, or explicitly with `updateElementGeometry`).
 
-Technical effects on direct children:
-- Creates a stacking context
-- Becomes a containing block for all descendants
-- Has paint containment
+### 2. The `drawable` attribute
 
-### 2. `drawElementImage()` (and WebGL/WebGPU equivalents)
+Required on any descendant you want to draw (including direct children). It implies `isolation: isolate` and makes the element a containing block for all its descendants. Drawables **can be nested**. A *drawable subtree* is a drawable element and its descendants, excluding nested drawables and their subtrees, so each nested drawable is drawn in its own call.
 
-Draws a direct child of the canvas into the canvas. Returns a `DOMMatrix` transform for synchronization.
+### 3. The `paint` event
 
-```js
-const transform = ctx.drawElementImage(element, x, y);
-const transform = ctx.drawElementImage(element, x, y, width, height);
-const transform = ctx.drawElementImage(element, sx, sy, sw, sh, dx, dy);
-const transform = ctx.drawElementImage(element, sx, sy, sw, sh, dx, dy, dw, dh);
-```
+- A snapshot of every `drawable` element's rendering (its drawable subtree) is recorded on each rendering update. `paint` fires whenever a snapshot would be drawn differently.
+- Fires just **after intersection observer steps** in update-the-rendering (after the browser's Paint step; see "Option C" in `design-decisions.md`).
+- `event.changedElements` lists the changed `drawable` descendants (`CanvasPaintEvent`).
+- **Canvas draw commands in the handler appear in this rendering update. DOM changes in the handler appear in the *next* one.**
+- Ordering: fires in **reverse document order** (child frames before parents) and **reverse tree order** within a document, so descendants paint before ancestors (inner canvases before outer ones).
+- Implementations may fire spuriously but should avoid it.
+- `canvas.requestPaint()` forces one `paint` at the next rendering opportunity, like `requestAnimationFrame()`. Call it each frame for continuous animation.
 
-**Key behaviors:**
-- Canvas CTM is applied when drawing
-- CSS transforms on the source element are IGNORED for drawing (but still affect hit testing)
-- Overflow is clipped to the element's border box
-- If width/height omitted, element maintains its on-screen size proportions
-- Returns a CSS transform to synchronize DOM position with drawn position
-
-**WebGL equivalent:** `gl.texElementImage2D(target, level, internalformat, format, type, element)`
-**WebGPU equivalent:** `queue.copyElementImageToTexture(element, destination)`
-
-### 3. `paint` event
-
-Fires when rendering of any canvas children has changed. Fires just after intersection observer steps during `update-the-rendering`.
+### 4. Drawing: `drawElementImage` / `texElementSubImage2D` / `drawElementImageToTexture`
 
 ```js
-canvas.onpaint = (event) => {
-  // event.changedElements — array of children whose rendering changed
-  ctx.reset();
-  const transform = ctx.drawElementImage(myElement, 0, 0);
-  myElement.style.transform = transform.toString();
-};
+ctx.drawElementImage(element, dx, dy);
+ctx.drawElementImage(element, dx, dy, dw, dh);
+ctx.drawElementImage(element, sx, sy, sw, sh, dx, dy);
+ctx.drawElementImage(element, sx, sy, sw, sh, dx, dy, dw, dh);
+// each accepts an optional trailing { preserveElementGeometry: boolean }
 ```
 
-**Key behaviors:**
-- Contains `changedElements` — list of children that changed
-- CSS transform changes do NOT trigger paint (transforms are ignored for rendering)
-- Canvas drawing commands in paint event appear in current frame
-- DOM changes in paint event appear in NEXT frame
-- `requestPaint()` forces paint event to fire (like `requestAnimationFrame()`)
+- Draws the **last snapshot** of a `drawable` element and its drawable subtree.
+- Rendering starts at the **border box, before CSS transforms**. The canvas CTM applies.
+- Source rect params can clip, or add outsets to include ink overflow. Dest params position and scale.
+- **Throws** for elements without `drawable`, before the first snapshot, or for elements with another canvas ancestor.
+- Returns `undefined`.
 
-### 4. `captureElementImage()` — for OffscreenCanvas/workers
+WebGL: `gl.texElementSubImage2D(target, level, xoffset, yoffset, element, config?)` (needs pre-allocated storage, sized from `getElementImageDefaultSize`).  
+WebGPU: `queue.drawElementImageToTexture({ source, sourceX?, … }, { texture, size? })`.  
+Workers: `canvas.captureElementImage(el)` → transferable `ElementImage` → draw on an `OffscreenCanvas`.  
+Sizing: `canvas.getElementImageDefaultSize(el)` (also on `OffscreenCanvas`, and also accepts an `ElementImage`) returns `{ width, height }` in canvas grid coordinates. That's the size used when `drawElementImage` gets no `dw`/`dh`.
 
-```js
-const elementImage = canvas.captureElementImage(element);
-worker.postMessage({ elementImage }, [elementImage]); // transferable
+### 5. Synchronizing DOM and drawing: `updateElementGeometry`
+
+Each drawable element has three pieces of geometry state, used for hit testing, accessibility bounds, and DOM geometry APIs. None of them affect rendering, so changing them never triggers `paint`:
+
+- **Canvas element transform** (`canvasTransform`, a `DOMMatrix`): maps the border box, before CSS transforms, to its drawn location in the canvas. Setting it also gives the element geometry in the accessibility tree.
+- **Canvas element clip** (`canvasClip`, a `DOMRect` in the transform's coordinate space; called `clip` before Oct 2026): limits the hit-test region when only part of the element is drawn. Under a rotated or skewed `canvasTransform`, Chrome 157 hit-tests against the clip's axis-aligned bounding box (issue #186).
+- **Hit-test order**: the canvas keeps an ordered stack of drawable descendants. Each update puts the element on top unless you pass `preserveHitTestOrder: true` and it's already in the stack. Hit testing goes straight from the canvas to each descendant, skipping intervening clips and transforms.
+
+`clearElementGeometry(el)` resets it. `getElementTransform(el)` reads the transform back (identity if unset).
+
+**2D contexts:** `drawElementImage` calls `updateElementGeometry` automatically with the drawn transform. Opt out with `{ preserveElementGeometry: true }`.  
+**WebGL/WebGPU:** you must call `canvas.updateElementGeometry(el, { canvasTransform })` yourself, because the texture-to-screen mapping isn't visible to the canvas API.  
+**OffscreenCanvas / workers:** updates are queued, batched in a microtask, posted to the main thread, and applied atomically. Then `elementgeometryupdate` fires on the `<canvas>` with the updated `elements`.
+
+## Basic Example
+
+```html
+<canvas style="width: 400px; height: 200px;" content="drawable">
+  <form drawable>
+    <label for="name">name:</label>
+    <input id="name">
+  </form>
+</canvas>
+<script>
+  const canvas = document.querySelector('canvas');
+  const form = document.querySelector('canvas form');
+  const ctx = canvas.getContext('2d');
+
+  canvas.onpaint = () => {
+    ctx.reset();
+    ctx.drawElementImage(form, 100, 0);
+  };
+
+  new ResizeObserver((entries) => {
+    canvas.width = entries[0].devicePixelContentBoxSize[0].inlineSize;
+    canvas.height = entries[0].devicePixelContentBoxSize[0].blockSize;
+  }).observe(canvas, { box: 'device-pixel-content-box' });
+</script>
 ```
 
-Creates a transferable `ElementImage` snapshot for use in workers with `OffscreenCanvas`.
+## Accessibility
 
-## Synchronization
+- `content="drawable"` descendants are in the a11y tree like regular DOM.
+- If a drawable's geometry hasn't been set (automatically or explicitly), it and its drawable subtree are reported **without geometry**, so assistive tech can filter them, but semantics are kept.
+- Content you're not drawing (hidden views, stale content) is still in the a11y tree. Remove it from the DOM or hide it with `aria-hidden="true"` / `inert`.
+- Focus rings and carets **are** rendered by `drawElementImage` (and the WebGL/WebGPU equivalents).
+- Wrapping elements don't need `drawable` to keep their semantics:
 
-The element's DOM position must match its drawn position for hit testing, accessibility, and intersection observer to work. `drawElementImage()` returns the CSS transform to apply:
-
-```js
-const transform = ctx.drawElementImage(element, x, y);
-element.style.transform = transform.toString();
+```html
+<canvas id="canvas" content="drawable">
+  <figure>
+    <img drawable id="image" src="…" alt="image alt text" />
+    <figcaption drawable id="caption">A caption</figcaption>
+  </figure>
+</canvas>
+<script>
+  canvas.onpaint = () => {
+    const ctx = canvas.getContext('2d');
+    ctx.reset();
+    ctx.drawElementImage(image, 0, 0);     // auto geometry → a11y bounds
+    ctx.drawElementImage(caption, 0, 200);
+  };
+</script>
 ```
 
-For 3D contexts, use `canvas.getElementTransform(element, drawTransform)`.
+## Read-back-allowed rendering (privacy)
 
-The general formula:
+Drawn snapshots, and the `paint` event itself (invalidation timing), must not reveal anything author code couldn't already observe. This is what makes pixel read-back safe.
 
-```
-T_origin^-1 * S_css_to_grid^-1 * T_draw * S_css_to_grid * T_origin
-```
-
-Where:
-- `T_draw` = CTM * Translation(x,y) * Scale(destScale)
-- `T_origin` = element's computed transform-origin
-- `S_css_to_grid` = CSS pixels to canvas grid pixels
-
-## Privacy-Preserving Painting
-
-`drawElementImage()` must not reveal security/privacy-sensitive information:
-
-**Excluded from painting:**
-- Cross-origin data in embedded content (iframes, images, url() refs, SVG use)
+**Excluded (not painted / not invalidated):**
+- Cross-origin data in embedded content (`<iframe>`, `<img>`), `url()` references (`background-image`, `clip-path`), cross-origin-tainted `<canvas>`, and SVG references (`<use>`, `<pattern>`, `<feImage>`). Same-origin iframes paint, but cross-origin content inside them doesn't.
 - System colors, themes, preferences
-- Spelling/grammar markers
+- Spelling and grammar markers
 - Visited link information
 - Pending autofill information
 - Subpixel text anti-aliasing
+- **Captions and video controls**
+- **IME pop-ups and distinctive IME text formatting**
 
-**Allowed (not considered sensitive):**
-- Find-in-page / text-fragment markers
-- Scrollbar and form element appearance (already detectable via foreignObject)
-- Caret blink rate
-- forced-colors (already available via media query)
+**Not considered sensitive:** find-in-page and text-fragment markers, scrollbar and form-control appearance, caret blink rate, `forced-colors`.
 
-## Paint Event Timing (Option C — chosen approach)
+## Migrating from the old API
 
-The paint event fires immediately after the browser's own Paint step, runs only once per frame. DOM invalidations during paint apply to the next frame, not the current one. This avoids the complexity and performance issues of looping approaches.
+| Old (≤ mid-2026, Chromium ~147 era) | New |
+|---|---|
+| `<canvas layoutsubtree>` | `<canvas content="drawable">` |
+| any direct child drawable | add `drawable` to every drawn element. Nesting is allowed. |
+| `const t = ctx.drawElementImage(el, x, y); el.style.transform = t.toString();` | `ctx.drawElementImage(el, x, y);` (auto-synced, returns `undefined`) |
+| `canvas.getElementTransform(el, drawTransform)` + set `style.transform` (3D) | `canvas.updateElementGeometry(el, { canvasTransform })` |
+| `gl.texElementImage2D(target, level, ifmt, fmt, type, el)` | allocate with `texImage2D(..., null)`, then `gl.texElementSubImage2D(target, level, 0, 0, el)` |
+| `queue.copyElementImageToTexture(el, { texture })` | `queue.drawElementImageToTexture({ source: el }, { texture, size })` |
+| `PaintEvent` | `CanvasPaintEvent` |
+| `ElementImage.width/height` | removed. Use `canvas.getElementImageDefaultSize(el)` → `{ width, height }` (`double`, canvas grid coordinates) |
+| `updateElementGeometry(el, { clip })` | `updateElementGeometry(el, { canvasClip })` |
+| worker posts transform back, main thread sets `style.transform` | automatic, plus `canvas.onelementgeometryupdate` |
+
+The migration period is over. Chrome 157, the first version with this on by default, has **none** of the old names, and ignores `layoutsubtree`. Official demos still write both `content="drawable"` and `layoutsubtree` and keep `try/catch` fallbacks for pre-157 builds. Don't copy that into new code unless the user needs those builds.
+
+## Future considerations
+
+- **Auto-updating canvas:** `drawElementImage` would record a placeholder that's replayed on threaded scroll/animation updates without blocking on script. This would allow effects that stay in sync with native scrolling. Viable for 2D, and maybe WebGPU.
