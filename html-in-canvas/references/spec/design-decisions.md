@@ -45,7 +45,7 @@ Workers can't touch the DOM synchronously. Geometry updates from an `OffscreenCa
 
 ## Why `texElementSubImage2D` (sub-image) rather than `texElementImage2D`?
 
-Raised in issue #33 (greggman). `texImage2D` both allocates and uploads, so it can't target immutable `texStorage2D` textures, which are more efficient. The sub-image form only uploads: you allocate once (sized from `ElementImage.width/height`), upload repeatedly, and can place the element at an `xoffset`/`yoffset` inside a larger atlas.
+Raised in issue #33 (greggman). `texImage2D` both allocates and uploads, so it can't target immutable `texStorage2D` textures, which are more efficient. The sub-image form only uploads: you allocate once (sized from `canvas.getElementImageDefaultSize(el)`), upload repeatedly, and can place the element at an `xoffset`/`yoffset` inside a larger atlas.
 
 ## Why `drawElementImageToTexture` with dictionaries (WebGPU)?
 
@@ -62,6 +62,10 @@ Events fire in reverse tree order (and child frames before parents), so inner dr
 ## Why `captureElementImage` for workers?
 
 Workers have no DOM. A transferable `ElementImage` snapshot fits the `ImageBitmap` pattern. Workers pass it wherever an `Element` is accepted, and from a worker only `ElementImage` may be passed to `updateElementGeometry`.
+
+## Why `getElementImageDefaultSize()` instead of `ElementImage.width/height`?
+
+Sizing used to require capturing a snapshot (`captureElementImage(el).width`) even on the main thread, just to allocate a texture. In Oct 2026 the size moved to a canvas method, `getElementImageDefaultSize(Element or ElementImage)`, on both `HTMLCanvasElement` and `OffscreenCanvas`, and `ElementImage` was reduced to `close()`. You can now size directly from the element, and workers can still ask with an `ElementImage`. In the same change, `clip` was renamed `canvasClip` to match `canvasTransform`.
 
 ## Why not `foreignObject` or `html2canvas`?
 

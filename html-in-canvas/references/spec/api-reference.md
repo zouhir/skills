@@ -5,7 +5,7 @@ order: 2
 
 # HTML-in-Canvas API Reference
 
-_Synced from the [`WICG/html-in-canvas` README](https://github.com/WICG/html-in-canvas/blob/main/README.md) IDL as of 2026-10-03 (upstream commit `20d5f08`)._
+_Synced from the [`WICG/html-in-canvas` README](https://github.com/WICG/html-in-canvas/blob/main/README.md) IDL as of 2026-11-07 (upstream commit `5d9d970`), and checked against the Chromium M157 IDL (the first version with this on by default). They match._
 
 ## IDL Definitions
 
@@ -19,11 +19,17 @@ dictionary UpdateElementGeometryOptions {
 
   // The element's canvas clip used for hit testing, in the coordinate space of
   // `canvasTransform`. If omitted, the existing clip is preserved.
-  DOMRectInit clip;
+  // (Renamed from `clip` in Oct 2026.)
+  DOMRectInit canvasClip;
 
   // Maps the element's border box, before CSS transforms, to the canvas.
   // If omitted, the existing canvas transform is preserved.
   DOMMatrixInit canvasTransform;
+};
+
+dictionary ElementImageDefaultSize {
+  double width;
+  double height;
 };
 
 partial interface HTMLCanvasElement {
@@ -49,6 +55,10 @@ partial interface HTMLCanvasElement {
 
   // Fired when geometry updates that came from an OffscreenCanvas are applied.
   attribute EventHandler onelementgeometryupdate;
+
+  // The default size of the element in canvas grid coordinates.
+  ElementImageDefaultSize getElementImageDefaultSize(
+      (Element or ElementImage) element);
 };
 ```
 
@@ -58,7 +68,8 @@ partial interface HTMLCanvasElement {
 | `onpaint` | Handler for the `paint` event (a `CanvasPaintEvent`). |
 | `requestPaint()` | Fire `paint` once at the next rendering opportunity even if nothing changed. Analogous to `requestAnimationFrame()`. |
 | `captureElementImage(element)` | Returns the most recent snapshot of a `drawable` element as a transferable `ElementImage`. |
-| `updateElementGeometry(element, options)` | Sets the element's canvas transform, hit-test clip, and hit-test order. Required for WebGL/WebGPU; automatic for 2D. |
+| `getElementImageDefaultSize(element)` | Returns `{ width, height }` (`double`, canvas grid coordinates): the size `drawElementImage` uses when `dw`/`dh` are omitted. Use it to size textures. Accepts an `Element` or `ElementImage`. Replaces the removed `ElementImage.width/height`. |
+| `updateElementGeometry(element, options)` | Sets the element's canvas transform (`canvasTransform`), hit-test clip (`canvasClip`), and hit-test order. Required for WebGL/WebGPU; automatic for 2D. |
 | `clearElementGeometry(element)` | Clears the state set by `updateElementGeometry`. |
 | `getElementTransform(element)` | Reads back the current canvas transform. **Signature changed:** it no longer takes a `drawTransform` argument. |
 | `onelementgeometryupdate` | Fires on the `<canvas>` after batched OffscreenCanvas geometry updates are applied. |
@@ -83,6 +94,10 @@ partial interface OffscreenCanvas {
       (Element or ElementImage) element,
       optional UpdateElementGeometryOptions options = {});
   void clearElementGeometry((Element or ElementImage) element);
+
+  // The default size of the element in canvas grid coordinates.
+  ElementImageDefaultSize getElementImageDefaultSize(
+      (Element or ElementImage) element);
 };
 ```
 
@@ -125,7 +140,7 @@ interface mixin CanvasDrawElementImage {
 
 | Signature | Description |
 |-----------|-------------|
-| `(element, dx, dy, opts?)` | Draw at (dx, dy) at the element's natural size (`ElementImage.width/height`) |
+| `(element, dx, dy, opts?)` | Draw at (dx, dy) at the element's default size (`canvas.getElementImageDefaultSize(element)`) |
 | `(element, dx, dy, dw, dh, opts?)` | Draw at (dx, dy) scaled to dw × dh |
 | `(element, sx, sy, sw, sh, dx, dy, opts?)` | Draw source rect at (dx, dy) |
 | `(element, sx, sy, sw, sh, dx, dy, dw, dh, opts?)` | Draw source rect scaled into dest rect |
@@ -161,13 +176,13 @@ partial interface WebGLRenderingContext {
 };
 ```
 
-⚠️ Replaces `texElementImage2D`. Like `texSubImage2D`, it **does not allocate storage**. You must allocate first (`texImage2D(..., null)` or `texStorage2D`), sized to `config.width/height` or the element's natural size (`captureElementImage(el).width/height`, rounded up). Re-allocate only when the element grows.
+⚠️ Replaces `texElementImage2D`. Like `texSubImage2D`, it **does not allocate storage**. You must allocate first (`texImage2D(..., null)` or `texStorage2D`), sized to `config.width/height` or the element's default size (`canvas.getElementImageDefaultSize(el)`, rounded up). Re-allocate only when the element grows.
 
 ```js
-const img = canvas.captureElementImage(element);
+const { width, height } = canvas.getElementImageDefaultSize(element);
 gl.bindTexture(gl.TEXTURE_2D, tex);
 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8,
-              Math.ceil(img.width), Math.ceil(img.height), 0,
+              Math.ceil(width), Math.ceil(height), 0,
               gl.RGBA, gl.UNSIGNED_BYTE, null);           // allocate once / on growth
 gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, element); // every paint
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); // LINEAR, not mipmaps, for text
@@ -226,15 +241,11 @@ Renamed from `PaintEvent`. `changedElements` lists the canvas's `drawable` desce
 ```idl
 [Exposed=(Window,Worker), Transferable]
 interface ElementImage {
-  // Default size in canvas grid coordinates; used when drawElementImage()
-  // is called without dwidth/dheight.
-  readonly attribute double width;
-  readonly attribute double height;
   undefined close();
 };
 ```
 
-`width` / `height` are now `double` in **canvas grid coordinates** (not `unsigned long` pixels). Use `Math.ceil` when sizing textures.
+⚠️ Breaking change (Oct 2026): `ElementImage` no longer has `width` / `height`. Pass the element or the `ElementImage` to `canvas.getElementImageDefaultSize()` (or `offscreenCanvas.getElementImageDefaultSize()` in a worker) instead. The result is a `double` in **canvas grid coordinates**, so use `Math.ceil` when sizing textures.
 
 ### ElementGeometryUpdateEvent
 
@@ -303,9 +314,11 @@ The nested element is skipped when its drawable ancestor is drawn. Put it back a
 ctx.drawElementImage(el, x, y, { preserveElementGeometry: true });
 canvas.updateElementGeometry(el, {
   canvasTransform: myTransform,                 // border box → canvas
-  clip: new DOMRect(0, 0, visibleW, visibleH),  // only part of it was drawn
+  canvasClip: new DOMRect(0, 0, visibleW, visibleH),  // only part of it was drawn
 });
 ```
+
+Under a rotated or skewed `canvasTransform`, Chrome 157 hit-tests against the clip's axis-aligned bounding box rather than the transformed rectangle (issue #186). Don't rely on precise clipped hit regions for rotated elements.
 
 ### OffscreenCanvas with Worker
 
@@ -339,7 +352,7 @@ No manual transform round-trip anymore. The worker's draw call queues the geomet
 
 ```js
 canvas.onpaint = () => {
-  if (!allocated) { /* texImage2D(..., null) sized from captureElementImage */ allocated = true; }
+  if (!allocated) { /* texImage2D(..., null) sized from getElementImageDefaultSize */ allocated = true; }
   gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, element);
   drawScene();
   canvas.updateElementGeometry(element, { canvasTransform: elementToCanvasCss });

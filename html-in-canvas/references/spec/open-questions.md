@@ -5,7 +5,7 @@ order: 5
 
 # Open Questions & Issues
 
-_Synced from [`WICG/html-in-canvas` issues](https://github.com/WICG/html-in-canvas/issues) on 2026-10-03._
+_Synced from [`WICG/html-in-canvas` issues](https://github.com/WICG/html-in-canvas/issues) on 2026-11-07._
 
 ## Resolved since the April 2026 snapshot
 
@@ -16,12 +16,24 @@ These are closed or superseded by the Aug–Sep 2026 API changes:
 - **#48 `display: contents` root fails to draw:** superseded. Drawn elements need `drawable` and generated boxes, so put `drawable` on an element that has a box.
 - **#96, #95 (`changedElements` shape / workers), #88 (`ElementImage` lifetime), #82 (fingerprinting), #47 (blend modes), #31 (animated media), #107 (CSS layout of renderables), #112 (site bug):** closed upstream. The current IDL keeps `changedElements` as a `FrozenArray<Element>`.
 
-## Breaking-change announcements (pinned)
+## Breaking-change announcements (closed 2026-11-05)
 
 - **[#179](https://github.com/WICG/html-in-canvas/issues/179) `layoutsubtree` → `content=drawable`**
-- **[#174](https://github.com/WICG/html-in-canvas/issues/174) `drawElementImageToTexture`, `texElementSubImage2D`, the `drawable` attribute, geometry updates.** This is the full migration guide. Old WebGL/WebGPU names work only during a migration period.
+- **[#174](https://github.com/WICG/html-in-canvas/issues/174) `drawElementImageToTexture`, `texElementSubImage2D`, the `drawable` attribute, geometry updates.** This is the full migration guide.
+- **[#184](https://github.com/WICG/html-in-canvas/pull/184) (merged 2026-10-09):** added `getElementImageDefaultSize()`, removed `ElementImage.width/height`, and renamed `clip` → `canvasClip`. There was no separate announcement issue.
+
+Both announcements were closed after Chrome 157 enabled the feature by default. The migration period is over, and Chrome 157 has no old names.
 
 ## Still open
+
+### [#188: Support drawing image backdrops](https://github.com/WICG/html-in-canvas/issues/188)
+Request for a `DrawElementImageOptions` flag that samples the canvas backdrop, for glass-like effects. Related to #79. Not available today, so build backdrop effects manually from what you've already drawn.
+
+### [#187: Framework integration via `drawElementImageToTexture`](https://github.com/WICG/html-in-canvas/issues/187)
+Field feedback from a React/Vue framework that presents app UI through WebGPU textures. Useful reading for framework-scale integrations.
+
+### [#186: `canvasClip` hit testing under non-axis-aligned transforms](https://github.com/WICG/html-in-canvas/issues/186)
+In Chrome 157, a `canvasClip` under a rotated or skewed `canvasTransform` hit-tests against the clip's axis-aligned bounding box, not the transformed rectangle ([crbug 573454036](https://issues.chromium.org/issues/573454036)). **Implication:** clicks just outside a rotated clip can still land on the element.
 
 ### [#171: Allow on-demand paint records for offline rendering](https://github.com/WICG/html-in-canvas/issues/171)
 For offline video export you want to change DOM state and get its snapshot *immediately* (a hypothetical `await drawable.recordPaint()`). Today you `requestPaint()` and await the next `paint`, which adds ~8–17 ms per frame at 60 Hz. **Implication:** frame-by-frame export is bound to the display's frame rate for now.

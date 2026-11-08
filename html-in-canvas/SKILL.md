@@ -1,13 +1,13 @@
 ---
 name: html-in-canvas
-description: Use the WICG HTML-in-Canvas browser API (`<canvas content="drawable">`, the `drawable` attribute, `drawElementImage`, `onpaint`, `requestPaint`, `updateElementGeometry`, `captureElementImage`, `texElementSubImage2D`, `drawElementImageToTexture`; formerly `layoutsubtree`, `texElementImage2D`, `copyElementImageToTexture`) to paint real, accessible DOM into a canvas. Trigger when the user asks to render HTML inside a canvas, replace `html2canvas`, use DOM as a WebGL/WebGPU texture, capture an HTML element to an image/PNG, migrate old `layoutsubtree` code, or otherwise mentions "HTML in canvas", `drawElementImage`, `drawable`, or `layoutsubtree`.
+description: Use the HTML-in-Canvas browser API, shipped in Chrome 157 (`<canvas content="drawable">`, the `drawable` attribute, `drawElementImage`, `onpaint`, `requestPaint`, `updateElementGeometry`, `getElementImageDefaultSize`, `captureElementImage`, `texElementSubImage2D`, `drawElementImageToTexture`; formerly `layoutsubtree`, `texElementImage2D`, `copyElementImageToTexture`, `ElementImage.width`) to paint real, accessible DOM into a canvas. Trigger when the user asks to render HTML inside a canvas, replace `html2canvas`, use DOM as a WebGL/WebGPU texture, capture an HTML element to an image/PNG, migrate old `layoutsubtree` code, or otherwise mentions "HTML in canvas", `drawElementImage`, `drawable`, or `layoutsubtree`.
 ---
 
 # HTML-in-Canvas
 
-A dev-trial Chromium API (Chrome Canary, behind flags) that lets `<canvas>` paint real DOM descendants. The browser handles layout, text shaping, accessibility, focus, and hit testing. The canvas draws snapshots of the elements as pixels, which compose with all existing 2D / WebGL / WebGPU operations.
+A Chromium API, **on by default since Chrome 157** (stable 2026-11-03), that lets `<canvas>` paint real DOM descendants. It isn't in Firefox or Safari. The browser handles layout, text shaping, accessibility, focus, and hit testing. The canvas draws snapshots of the elements as pixels, which compose with all existing 2D / WebGL / WebGPU operations.
 
-**The API had breaking changes in Aug–Sep 2026.** Most code, blog posts, and training data use the *old* shape (`layoutsubtree`, `DOMMatrix` return value, `texElementImage2D`, `copyElementImageToTexture`). **The authoritative source is the bundled spec, not your memory.** Read it first, every time.
+**The API had breaking changes in Aug–Oct 2026, and Chrome 157 shipped only the new shape.** Most code, blog posts, and training data use the *old* shape (`layoutsubtree`, `DOMMatrix` return value, `texElementImage2D`, `copyElementImageToTexture`, `ElementImage.width/height`, the `clip` geometry option). None of those work in Chrome 157. **The authoritative source is the bundled spec, not your memory.** Read it first, every time.
 
 ## STEP 0: Read the spec before writing any code (every time)
 
@@ -19,13 +19,13 @@ references/spec/
 ├── api-reference.md     # exact IDL, all overloads, geometry API, WebGL/WebGPU, patterns
 ├── design-decisions.md  # why: drawable attr, auto geometry, sub-image upload, Option C
 ├── examples-analysis.md # the 5 official demos broken down into copyable patterns
-├── browser-support.md   # flags, old-vs-new API generations, feature detection
+├── browser-support.md   # Chrome 157 ship status, timeline, API generations, feature detection
 └── open-questions.md    # open upstream issues; check before relying on edge behavior
 ```
 
 Read `overview.md` + `api-reference.md` at minimum. Add the others as the task needs them (3D → examples-analysis; "why doesn't X work" → open-questions + design-decisions; migrating old code → overview's migration table + browser-support).
 
-**Staying current:** this is a snapshot of the WICG explainer as of **2026-10-03** (upstream `20d5f08`). The upstream source is https://github.com/WICG/html-in-canvas (`README.md` + `Examples/`). Breaking changes are announced as pinned issues there. If you have network access and the task depends on exact details, check for commits after that date. If upstream has diverged, tell the user, and offer to refresh `references/spec/`. Never *require* that check. The bundled copy is enough to answer.
+**Staying current:** this is a snapshot of the WICG explainer as of **2026-11-07** (upstream `5d9d970`), checked against the Chromium M157 IDL. The upstream sources are https://github.com/WICG/html-in-canvas (`README.md` + `Examples/`) and the HTML spec PR https://github.com/whatwg/html/pull/11588. Now that the feature has shipped, breaking changes should be rare. Watch for spec-PR review changes and Chromium IDL changes under `third_party/blink/renderer/core/html/canvas/`. If you have network access and the task depends on exact details, check for changes after that date. If upstream has diverged, tell the user, and offer to refresh `references/spec/`. Never *require* that check. The bundled copy is enough to answer.
 
 If the spec and the quick reference below ever disagree, the spec wins. Flag the discrepancy to the user.
 
@@ -37,15 +37,16 @@ Reach for HTML-in-Canvas when the canvas needs:
 - A native replacement for `html2canvas` / DOM-to-image
 - HTML as a WebGL/WebGPU texture (3D scenes, shader effects, media export)
 
-Do **not** suggest it for production code that must work today in Firefox/Safari or in Chrome stable without flags. It's dev-trial only. Always pair an example with browser-support guidance.
+It's fine for production in Chromium 157+, but always **feature-detect and keep a plain-DOM fallback** for Firefox, Safari, and older Chromium. Don't suggest it where cross-browser rendering parity is required. Always pair an example with browser-support guidance.
 
 ## Browser support
 
-- Chrome Canary: enable **both** `chrome://flags/#canvas-draw-element` **and** `chrome://flags/#enable-experimental-web-platform-features`, then relaunch. Chrome blocks click-through to `chrome://` URLs, so tell users to copy and paste them.
-- Brave Stable 1.89 / Chromium 147 (`brave://flags/#canvas-draw-element`) has only the **old** API.
-- Firefox / Safari: not implemented, no announced timeline.
+- **Chrome / Edge / other Chromium 157+:** on by default. No flags.
+- **Chromium < 157:** old API shape behind flags or the M148–150 origin trial (e.g. Brave 1.89 on Chromium 147). Treat as unsupported unless the user specifically needs it.
+- **Firefox / Safari:** not implemented. Standards-position requests are open with no position (mozilla#1076, WebKit#630).
+- Feature-detect with `'drawElementImage' in CanvasRenderingContext2D.prototype`, and `'getElementImageDefaultSize' in HTMLCanvasElement.prototype` for the shipped shape.
 
-Confirm against `browser-support.md`, which changes often.
+Confirm against `browser-support.md`.
 
 ## Quick reference (current API; verify against the spec)
 
@@ -57,15 +58,16 @@ Confirm against `browser-support.md`, which changes often.
   - Throws if the element isn't `drawable`, before the first snapshot, or if the element is inside a nested `<canvas>`.
 - **`paint` event** (`CanvasPaintEvent`, `event.changedElements`) fires after Paint each rendering update when a snapshot changed. **Draw calls land this frame. DOM mutations land next frame.** Fires in reverse tree order (descendants first). Geometry/CSS-transform changes don't trigger it.
 - **`canvas.requestPaint()`** forces one `paint` next frame. Use it for the initial paint, continuous animation, and after mutations made inside `onpaint`.
-- **`canvas.updateElementGeometry(el, { canvasTransform?, clip?, preserveHitTestOrder? })`** sets geometry manually. **Required for WebGL/WebGPU.** `canvasTransform` maps the border box → canvas **CSS** coordinates. `clip` limits the hit region. Also `clearElementGeometry(el)` and `getElementTransform(el)` (now one argument).
-- **`canvas.captureElementImage(el)`** returns a transferable `ElementImage` (`width`/`height` are `double`s in canvas grid units, plus `close()`). Use it for workers + `OffscreenCanvas`, and to size textures. Worker geometry updates are batched to the main thread, which then fires `canvas.onelementgeometryupdate` (`event.elements`).
-- **WebGL:** `gl.texElementSubImage2D(target, level, xoffset, yoffset, el, config?)`. It **doesn't allocate**, so call `texImage2D(..., null)` first, sized from `captureElementImage`. Use `TEXTURE_MIN_FILTER = LINEAR`.
+- **`canvas.updateElementGeometry(el, { canvasTransform?, canvasClip?, preserveHitTestOrder? })`** sets geometry manually. **Required for WebGL/WebGPU.** `canvasTransform` maps the border box → canvas **CSS** coordinates. `canvasClip` (formerly `clip`) limits the hit region. Also `clearElementGeometry(el)` and `getElementTransform(el)` (now one argument).
+- **`canvas.getElementImageDefaultSize(el)`** returns `{ width, height }` (`double`s, canvas grid units): the default draw size. Use it to size textures. It's also on `OffscreenCanvas`, and accepts an `ElementImage`.
+- **`canvas.captureElementImage(el)`** returns a transferable `ElementImage`. It has only `close()` and **no longer has `width`/`height`**. Use it for workers + `OffscreenCanvas`. Worker geometry updates are batched to the main thread, which then fires `canvas.onelementgeometryupdate` (`event.elements`).
+- **WebGL:** `gl.texElementSubImage2D(target, level, xoffset, yoffset, el, config?)`. It **doesn't allocate**, so call `texImage2D(..., null)` first, sized from `getElementImageDefaultSize`. Use `TEXTURE_MIN_FILTER = LINEAR`.
 - **WebGPU:** `device.queue.drawElementImageToTexture({ source: el, sourceX?, … }, { texture, size? })`.
 
 ## Required boilerplate (2D)
 
 ```html
-<canvas id="canvas" content="drawable" layoutsubtree>  <!-- layoutsubtree: only for old builds -->
+<canvas id="canvas" content="drawable">
   <div id="content" drawable>Real, accessible HTML</div>
 </canvas>
 ```
@@ -92,7 +94,7 @@ For animation, call `canvas.requestPaint()` at the end of `onpaint` (or from rAF
 
 ## Supporting old builds (only if the user needs it)
 
-Default to the **current** API. If the user is on Brave/Chromium 147-era builds, or asks for compatibility, do what the official demos do: set both `content="drawable"` and `layoutsubtree`, put `drawable` on drawn elements (harmless on old builds), and branch on feature detection:
+Default to the **current** API. Chrome 157 has none of the old names, and the upstream migration period is over. Only if the user must support pre-157 Chromium builds (e.g. Brave on Chromium 147, or the M148–150 origin trial), do what the official demos do: set both `content="drawable"` and `layoutsubtree`, put `drawable` on drawn elements (harmless on old builds), and branch on feature detection:
 
 ```js
 const NEW_API = 'updateElementGeometry' in HTMLCanvasElement.prototype;
@@ -101,7 +103,7 @@ const r = ctx.drawElementImage(el, x, y);
 if (!NEW_API && r) el.style.transform = r.toString();      // old: manual sync
 ```
 
-For WebGL/WebGPU, `try` the new method and fall back to `texElementImage2D(target, level, ifmt, fmt, type, el)` / `copyElementImageToTexture(...)` (see `examples-analysis.md` for exact fallbacks). The old names will be removed after the migration period, so say so.
+For WebGL/WebGPU, `try` the new method and fall back to `texElementImage2D(target, level, ifmt, fmt, type, el)` / `copyElementImageToTexture(...)` (see `examples-analysis.md` for exact fallbacks). For texture sizing, use `canvas.getElementImageDefaultSize?.(el) ?? canvas.captureElementImage(el)` (old builds expose `.width/.height` on the `ElementImage`). Tell the user these paths only exist for builds that are already obsolete.
 
 ## DPR / canvas sizing
 
@@ -117,7 +119,7 @@ Field testing on old (Chromium 147-era) builds sometimes showed DPR-scaled bitma
 
 3. **WebGL/WebGPU need explicit `updateElementGeometry` every paint.** Without it, drawn elements are not hit-testable, have no a11y geometry, and focus/clicks go nowhere. Project the textured quad to canvas CSS px and build a `DOMMatrix` (see the WebGL card in `examples-analysis.md`). Set `inert` on drawables that aren't currently visible (e.g. a card's back face).
 
-4. **`texElementSubImage2D` needs pre-allocated storage.** Allocate once with `texImage2D(..., null)` from `Math.ceil(captureElementImage(el).width/height)`, and re-allocate when the element grows. Otherwise you get GL errors or blank textures.
+4. **`texElementSubImage2D` needs pre-allocated storage.** Allocate once with `texImage2D(..., null)` from `Math.ceil` of `canvas.getElementImageDefaultSize(el)`'s `width`/`height`, and re-allocate when the element grows. `captureElementImage(el).width` is `undefined` in Chrome 157, so old code silently allocates a 0×0 texture. Otherwise you get GL errors or blank textures.
 
 5. **The source canvas must actually be painted by the browser.** `display:none`, `visibility:hidden`, `opacity:0`, `left:-9999px`, and `clip-path: inset(50%)` can make Chrome skip painting. Then there's no snapshot, and `drawElementImage` throws or draws blank. To hide a staging canvas but keep it painted, wrap it in a `1×1` `overflow:hidden` container at a real on-screen position and let it overflow. (Seen on old builds. Still a sensible default.)
 
@@ -135,20 +137,24 @@ Field testing on old (Chromium 147-era) builds sometimes showed DPR-scaled bitma
 
 12. **Offline/video export is frame-rate bound.** You must `requestPaint()` and await `paint` per frame. There's no synchronous snapshot yet (issue #171).
 
+13. **`canvasClip` hit testing under rotation is coarse.** With a rotated or skewed `canvasTransform`, Chrome 157 hit-tests against the clip's axis-aligned bounding box (issue #186). Clicks just outside a rotated clip can still hit the element.
+
+14. **Old code that "looks right" fails quietly in Chrome 157.** `layoutsubtree` is ignored, so children stay fallback content and nothing draws. `{ clip }` is ignored as an unknown dictionary key. `ElementImage.width` is `undefined`. When reviewing or migrating code, grep for all three.
+
 ## Self-check before reporting done
 
 - [ ] I read the bundled spec (`references/spec/`) for this task, not just memory.
-- [ ] Canvas has `content="drawable"` (plus `layoutsubtree` only if old builds matter).
+- [ ] Canvas has `content="drawable"` (plus `layoutsubtree` only if pre-157 builds matter).
 - [ ] Every drawn element has `drawable`. Nested drawables are drawn separately.
 - [ ] An `onpaint` handler exists, and `requestPaint?.()` triggers the first paint and any animation.
 - [ ] 2D: no manual `style.transform` sync (or it's gated behind old-API detection).
-- [ ] WebGL/WebGPU: storage pre-allocated, the new method names are used, and `updateElementGeometry` is called with a correct `canvasTransform`. Off-screen faces are `inert`.
+- [ ] WebGL/WebGPU: storage pre-allocated from `getElementImageDefaultSize`, the new method names are used, and `updateElementGeometry` is called with a correct `canvasTransform` (and `canvasClip`, not `clip`). Off-screen faces are `inert`.
 - [ ] Draw coordinates are in canvas grid px and the canvas is DPR-sized (or I flagged the HiDPI trade-off).
 - [ ] Undrawn descendants are removed or hidden from a11y.
-- [ ] I told the user it's dev-trial Chromium-only, which **two** flags to enable, and that older builds use a different API shape.
+- [ ] I told the user it's Chromium 157+ only (no flags), that Firefox/Safari need a fallback, and that pre-157 builds use a different API shape.
 
 ## References in this skill
 
-- `references/spec/`: six spec files synced from `WICG/html-in-canvas` on 2026-10-03. This is the source of truth and works on any machine.
+- `references/spec/`: six spec files synced from `WICG/html-in-canvas` (`5d9d970`) and checked against the Chromium M157 IDL on 2026-11-07. This is the source of truth and works on any machine.
 
 When editing demos inside a local `html-in-canvas-dot-dev` checkout, also follow that repo's `CLAUDE.md`. Note: that site's own `spec/` directory was last synced 2026-04-14 and predates the API change.

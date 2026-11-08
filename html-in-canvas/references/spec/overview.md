@@ -5,11 +5,11 @@ order: 1
 
 # HTML-in-Canvas Spec Overview
 
-**Source:** https://github.com/WICG/html-in-canvas (synced 2026-10-03)  
-**Status:** Living explainer, continuously updated. Dev trial in Chrome Canary behind **both** `chrome://flags/#canvas-draw-element` and `chrome://flags/#enable-experimental-web-platform-features`. See `browser-support.md`.  
+**Source:** https://github.com/WICG/html-in-canvas (synced 2026-11-07, upstream `5d9d970`; cross-checked against Chromium M157 IDL)  
+**Status:** Living explainer, continuously updated. HTML spec PR [whatwg/html#11588](https://github.com/whatwg/html/pull/11588) is open. **Enabled by default in Chrome 157+** (stable 2026-11-03), with no flags. Not in Firefox or Safari. See `browser-support.md`.  
 **Authors:** Philip Rogers, Stephen Chenney (Igalia), Chris Harrelson, Philip Jägenstedt, Stefan Zager, Khushal Sagar, Vladimir Levin, Fernando Serboncini
 
-> **API changed in Aug–Sep 2026.** `layoutsubtree` → `content="drawable"`. A `drawable` attribute is now required on drawn elements. `drawElementImage` returns `undefined` and syncs geometry automatically. WebGL/WebGPU methods were renamed. `PaintEvent` → `CanvasPaintEvent`. See "Migrating from the old API" below.
+> **API changed in Aug–Sep 2026.** `layoutsubtree` → `content="drawable"`. A `drawable` attribute is now required on drawn elements. `drawElementImage` returns `undefined` and syncs geometry automatically. WebGL/WebGPU methods were renamed. `PaintEvent` → `CanvasPaintEvent`. **Oct 2026:** `ElementImage.width/height` were removed in favor of `canvas.getElementImageDefaultSize(el)`, and the geometry option `clip` was renamed `canvasClip`. See "Migrating from the old API" below.
 
 ## Problem
 
@@ -69,16 +69,17 @@ ctx.drawElementImage(element, sx, sy, sw, sh, dx, dy, dw, dh);
 - **Throws** for elements without `drawable`, before the first snapshot, or for elements with another canvas ancestor.
 - Returns `undefined`.
 
-WebGL: `gl.texElementSubImage2D(target, level, xoffset, yoffset, element, config?)` (needs pre-allocated storage).  
+WebGL: `gl.texElementSubImage2D(target, level, xoffset, yoffset, element, config?)` (needs pre-allocated storage, sized from `getElementImageDefaultSize`).  
 WebGPU: `queue.drawElementImageToTexture({ source, sourceX?, … }, { texture, size? })`.  
-Workers: `canvas.captureElementImage(el)` → transferable `ElementImage` → draw on an `OffscreenCanvas`.
+Workers: `canvas.captureElementImage(el)` → transferable `ElementImage` → draw on an `OffscreenCanvas`.  
+Sizing: `canvas.getElementImageDefaultSize(el)` (also on `OffscreenCanvas`, and also accepts an `ElementImage`) returns `{ width, height }` in canvas grid coordinates. That's the size used when `drawElementImage` gets no `dw`/`dh`.
 
 ### 5. Synchronizing DOM and drawing: `updateElementGeometry`
 
 Each drawable element has three pieces of geometry state, used for hit testing, accessibility bounds, and DOM geometry APIs. None of them affect rendering, so changing them never triggers `paint`:
 
 - **Canvas element transform** (`canvasTransform`, a `DOMMatrix`): maps the border box, before CSS transforms, to its drawn location in the canvas. Setting it also gives the element geometry in the accessibility tree.
-- **Canvas element clip** (`clip`, a `DOMRect` in the transform's coordinate space): limits the hit-test region when only part of the element is drawn.
+- **Canvas element clip** (`canvasClip`, a `DOMRect` in the transform's coordinate space; called `clip` before Oct 2026): limits the hit-test region when only part of the element is drawn. Under a rotated or skewed `canvasTransform`, Chrome 157 hit-tests against the clip's axis-aligned bounding box (issue #186).
 - **Hit-test order**: the canvas keeps an ordered stack of drawable descendants. Each update puts the element on top unless you pass `preserveHitTestOrder: true` and it's already in the stack. Hit testing goes straight from the canvas to each descendant, skipping intervening clips and transforms.
 
 `clearElementGeometry(el)` resets it. `getElementTransform(el)` reads the transform back (identity if unset).
@@ -165,10 +166,11 @@ Drawn snapshots, and the `paint` event itself (invalidation timing), must not re
 | `gl.texElementImage2D(target, level, ifmt, fmt, type, el)` | allocate with `texImage2D(..., null)`, then `gl.texElementSubImage2D(target, level, 0, 0, el)` |
 | `queue.copyElementImageToTexture(el, { texture })` | `queue.drawElementImageToTexture({ source: el }, { texture, size })` |
 | `PaintEvent` | `CanvasPaintEvent` |
-| `ElementImage.width/height`: `unsigned long` | `double`, in canvas grid coordinates |
+| `ElementImage.width/height` | removed. Use `canvas.getElementImageDefaultSize(el)` → `{ width, height }` (`double`, canvas grid coordinates) |
+| `updateElementGeometry(el, { clip })` | `updateElementGeometry(el, { canvasClip })` |
 | worker posts transform back, main thread sets `style.transform` | automatic, plus `canvas.onelementgeometryupdate` |
 
-The old WebGL/WebGPU names keep working "during a migration period" but will be removed. Official demos currently set **both** `content="drawable"` and `layoutsubtree` on the canvas so they run on old and new builds.
+The migration period is over. Chrome 157, the first version with this on by default, has **none** of the old names, and ignores `layoutsubtree`. Official demos still write both `content="drawable"` and `layoutsubtree` and keep `try/catch` fallbacks for pre-157 builds. Don't copy that into new code unless the user needs those builds.
 
 ## Future considerations
 

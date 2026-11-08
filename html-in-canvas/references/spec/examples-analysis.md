@@ -5,9 +5,9 @@ order: 4
 
 # Official Examples Analysis
 
-All examples live at https://wicg.github.io/html-in-canvas/Examples/ (synced 2026-10-03, after the `content=drawable` / `drawable` update).
+All examples live at https://wicg.github.io/html-in-canvas/Examples/ (synced 2026-11-07, upstream `5d9d970`).
 
-**Transitional markup:** every official demo currently writes `<canvas content="drawable" layoutsubtree>` with a comment: "content=drawable is the new API and layoutsubtree has been left" so they still work on older builds. The WebGL and WebGPU demos also `try` the new method names and fall back to the old ones.
+**Transitional markup:** every official demo still writes `<canvas content="drawable" layoutsubtree>` with a comment: "content=drawable is the new API and layoutsubtree has been left" so they still work on older builds. The WebGL and WebGPU demos also `try` the new method names and fall back to the old ones. Chrome 157+ needs none of this. Copy only the new-API paths unless the user targets pre-157 builds.
 
 ## 1. Complex Text (complex-text.html)
 
@@ -114,11 +114,11 @@ function getInFlowRect(element) {
 - Textures start empty (`createEmptyTexture`). `onpaint` updates a texture only when its element is in `event.changedElements` (or the language changed).
 - **Texture upload (new API):**
   ```js
-  const img = gl.canvas.captureElementImage(element);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, img.width, img.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  const { width, height } = gl.canvas.getElementImageDefaultSize(element);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, element);
   ```
-  with `try/catch` fallbacks to `texElementImage2D(target, level, ifmt, fmt, type, el)` and an even older `texElementImage2D(target, ifmt, el)`.
+  with `try/catch` fallbacks to `texElementImage2D(target, level, ifmt, fmt, type, el)` and an even older `texElementImage2D(target, ifmt, el)`. (Before 2026-10-09 the demo sized from `captureElementImage(element).width/height`, which no longer exists.) The demo passes the `double` sizes straight in, and WebIDL truncates them. Wrap them in `Math.ceil` in your own code so a fractional edge isn't cropped.
 - `TEXTURE_MIN_FILTER = LINEAR`, `CLAMP_TO_EDGE`.
 - **Geometry sync:** after drawing, it projects the quad's top-left and bottom-right through the model-to-screen matrix, maps GL clip space (−1…1) to canvas CSS px, and builds a `DOMMatrix` (`a`/`d` = scale from the 400px element, `e`/`f` = offset):
   ```js
