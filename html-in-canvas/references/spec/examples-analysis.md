@@ -5,170 +5,193 @@ order: 4
 
 # Official Examples Analysis
 
-All examples live at https://wicg.github.io/html-in-canvas/Examples/
+All examples live at https://wicg.github.io/html-in-canvas/Examples/ (synced 2026-10-03, after the `content=drawable` / `drawable` update).
+
+**Transitional markup:** every official demo currently writes `<canvas content="drawable" layoutsubtree>` with a comment: "content=drawable is the new API and layoutsubtree has been left" so they still work on older builds. The WebGL and WebGPU demos also `try` the new method names and fall back to the old ones.
 
 ## 1. Complex Text (complex-text.html)
 
-**What it demonstrates:** Rich, rotated text with emoji, RTL, vertical text, inline images, and SVG — all rendered into canvas via a single `drawElementImage` call.
+**What it demonstrates:** Rotated rich text (emoji, RTL Persian, vertical Chinese, inline `<img>`/`<svg>`, a link) drawn with one call.
 
-**Key techniques:**
-- Canvas CTM rotation (`ctx.rotate`) — the drawn element follows the CTM
-- Multi-script text: LTR English, RTL Persian, vertical Chinese
-- Inline `<img>` and `<svg>` inside the drawn element
-- DPR-aware translation (`80 * devicePixelRatio`)
-
-**Pattern:**
+```html
+<canvas id="canvas" content="drawable" layoutsubtree>
+  <div id="draw_element" drawable style="width: 550px;">Hello from …</div>
+</canvas>
+```
 ```js
-canvas.onpaint = (event) => {
+canvas.onpaint = () => {
   ctx.reset();
   ctx.rotate((15 * Math.PI) / 180);
   ctx.translate(80 * devicePixelRatio, -20 * devicePixelRatio);
-  let transform = ctx.drawElementImage(draw_element, 0, 0);
-  draw_element.style.transform = transform.toString();
+  ctx.drawElementImage(draw_element, 0, 0);   // no transform write-back anymore
 };
-canvas.requestPaint(); // trigger initial paint
+canvas.requestPaint();
 ```
 
-**Insight:** This is the simplest example — one element, one draw call, one transform sync. Shows how `drawElementImage` replaces what would otherwise require complex `ctx.fillText` with font metrics, bidi algorithm, and manual line breaking.
+**Insight:** The simplest case. Rotation goes through the CTM, and hit testing and link clicks follow it automatically.
 
 ---
 
 ## 2. Pie Chart (pie-chart.html)
 
-**What it demonstrates:** A fully accessible, interactive pie chart with styled multi-line labels positioned radially.
+**What it demonstrates:** An accessible pie chart. Labels are focusable `role="listitem"` drawables positioned radially.
 
-**Key techniques:**
-- Multiple children drawn in a loop
-- ARIA roles (`role="list"`, `role="listitem"`, `tabindex="0"`)
-- `ctx.drawFocusIfNeeded()` for focus ring rendering
-- Radial positioning using trig — labels centered at 60% of radius at each slice's midpoint angle
-- `data-*` attributes for chart data
-- Radial gradient fills per wedge
-
-**Pattern:**
+```html
+<canvas content="drawable" layoutsubtree class="pie" role="list" aria-label="Pie Chart">
+  <div drawable class="label" role="listitem" tabindex="0" data-val="0.45" data-color="tomato">…</div>
+  …
+</canvas>
+```
 ```js
-for (const label of canvas.children) {
-  // Draw wedge with Path2D
-  const path = new Path2D();
-  path.arc(0, 0, radius, angle, angle + slice);
-  ctx.fill(path);
-
-  // Draw and position label
-  const mid = angle + slice / 2;
-  const x = Math.cos(mid) * radius * 0.60 - label_width / 2;
-  const y = Math.sin(mid) * radius * 0.60 - label_height / 2;
-  const transform = ctx.drawElementImage(label, x, y);
-  label.style.transform = transform;
-}
-
-// Focus ring on top
-if (focusedPath)
-  ctx.drawFocusIfNeeded(focusedPath, document.activeElement);
+canvas.onpaint = () => {
+  ctx.reset();
+  const radius = 0.95 * Math.min(canvas.width, canvas.height) / 2;
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  let angle = 0, focusedPath = null;
+  for (const label of canvas.children) {
+    const slice = Number(label.dataset.val) * Math.PI * 2;
+    const path = new Path2D(); path.moveTo(0, 0); path.arc(0, 0, radius, angle, angle + slice); path.closePath();
+    ctx.fill(path);
+    if (document.activeElement === label) focusedPath = path;
+    const mid = angle + slice / 2;
+    const w = label.offsetWidth * devicePixelRatio, h = label.offsetHeight * devicePixelRatio; // CSS → grid px
+    ctx.drawElementImage(label, Math.cos(mid) * radius * 0.6 - w / 2, Math.sin(mid) * radius * 0.6 - h / 2);
+    angle += slice;
+  }
+  if (focusedPath) ctx.drawFocusIfNeeded(focusedPath, document.activeElement);
+};
 ```
 
-**Insight:** This is the accessibility showcase. The labels ARE the fallback content — screen readers see `role="listitem"` elements with the actual text. Tab navigation works, and `drawFocusIfNeeded` provides proper focus indication. This is the key value prop over `ctx.fillText()`.
+**Insight:** The accessibility showcase. Note the `offsetWidth * devicePixelRatio` conversion: draw coordinates are canvas grid pixels. The demo still uses `drawFocusIfNeeded` (but see the SKILL.md gotcha about Brave crashes on older builds).
 
 ---
 
-## 3. Text Input / Interactive Form (text-input.html)
+## 3. Nested Sparkles (nested-sparkles.html), new
 
-**What it demonstrates:** A fully interactive HTML form (text inputs, checkboxes, radio buttons, range slider, button) rendered inside canvas.
+**What it demonstrates:** Nested drawables. A poem is one drawable, and one word inside it (`<span drawable id="sparkle">`) is a separate drawable with an animated sparkle effect drawn underneath it.
 
-**Key techniques:**
-- Forms work normally — typing, clicking, tabbing all function
-- The `paint` event fires when form state changes (cursor blink, selection, input)
-- Simple positioning at `canvas.width/25, canvas.height/25`
+```html
+<canvas id="canvas" content="drawable" layoutsubtree>
+  <div drawable id="poem">… And so are <span id="sparkle" drawable>you</span>.</div>
+</canvas>
+```
+```js
+canvas.onpaint = () => {
+  ctx.reset();
+  ctx.translate(canvas.width / 3, canvas.height / 5);
+  ctx.drawElementImage(poem, 0, 0);               // excludes #sparkle
+  const rect = getInFlowRect(sparkle);            // grid coords, relative to closest drawable/canvas
+  /* draw random white dots inside rect */
+  ctx.drawElementImage(sparkle, rect.x, rect.y, rect.width, rect.height);
+  canvas.requestPaint();                          // continuous animation
+};
 
-**Insight:** This proves that `layoutsubtree` preserves full interactivity. The form elements aren't simulated — they're real DOM elements with real event handlers, just drawn into the canvas. Cursor blinking triggers paint events automatically.
+function getInFlowRect(element) {
+  let rect = new DOMRect(element.offsetLeft, element.offsetTop, element.offsetWidth, element.offsetHeight);
+  const ancestor = element.parentElement.closest('[drawable], canvas');
+  if (ancestor.convertRectFromNode !== undefined) {           // GeometryUtils, where available
+    rect = ancestor.convertRectFromNode(rect, element.offsetParent).getBounds();
+  } else {
+    for (let cur = element.offsetParent; cur !== ancestor; cur = cur.offsetParent) {
+      rect.x += cur.offsetLeft; rect.y += cur.offsetTop;
+    }
+  }
+  return new DOMRect(rect.x * devicePixelRatio, rect.y * devicePixelRatio,
+                     rect.width * devicePixelRatio, rect.height * devicePixelRatio);
+}
+```
+
+**Insight:** Drawing a parent leaves a hole where its nested drawables are. You put them back yourself, at their in-flow position or anywhere else, with effects in between. This replaced the old "text-input" form demo.
 
 ---
 
-## 4. WebGL 3D Cube (webGL.html)
+## 4. WebGL Card (webGL.html), rewritten
 
-**What it demonstrates:** HTML content rendered as a texture on a rotating 3D cube using WebGL.
+**What it demonstrates:** An **interactive** 3D card that flips. The front has a language picker (`#choice`, checkboxes/radios), and the back shows a message in English, Spanish, Hindi, or Korean.
 
 **Key techniques:**
-- `gl.texElementImage2D()` instead of `texImage2D()`
-- `gl.TEXTURE_MIN_FILTER = gl.LINEAR` — important for text quality (not mipmaps)
-- `gl.CLAMP_TO_EDGE` wrapping
-- `inert` attribute on the drawn element to prevent hit testing in this demo
-- Standard gl-matrix cube rendering
-- `requestAnimationFrame` loop for rotation
+- Every drawable child has `drawable`. The message divs start `inert`, and `setInert()` toggles `inert` on whichever face isn't visible, so only the visible face is focusable and clickable.
+- Textures start empty (`createEmptyTexture`). `onpaint` updates a texture only when its element is in `event.changedElements` (or the language changed).
+- **Texture upload (new API):**
+  ```js
+  const img = gl.canvas.captureElementImage(element);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, img.width, img.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, element);
+  ```
+  with `try/catch` fallbacks to `texElementImage2D(target, level, ifmt, fmt, type, el)` and an even older `texElementImage2D(target, ifmt, el)`.
+- `TEXTURE_MIN_FILTER = LINEAR`, `CLAMP_TO_EDGE`.
+- **Geometry sync:** after drawing, it projects the quad's top-left and bottom-right through the model-to-screen matrix, maps GL clip space (−1…1) to canvas CSS px, and builds a `DOMMatrix` (`a`/`d` = scale from the 400px element, `e`/`f` = offset):
+  ```js
+  if (canvas.updateElementGeometry !== undefined)
+    canvas.updateElementGeometry(visible_elmt, { canvasTransform: canvas_transform });
+  else
+    visible_elmt.style.transform = canvas_transform.toString();   // old builds
+  ```
+- `onpaint` calls `canvas.requestPaint()` to loop. The ResizeObserver records both `devicePixelContentBoxSize` (grid) and `contentBoxSize` (CSS size, used for the geometry math).
 
-**Pattern:**
-```js
-function loadTexture(gl) {
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texElementImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, draw_element);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  return texture;
-}
+**Insight:** This resolves the old issue #71 ("replace webGL demo with one that is interactive"). The pattern for interactive 3D HTML is: draw to a texture, then `updateElementGeometry` with the projected screen rect, then `inert` the faces you can't see. You no longer need to raycast and re-dispatch events for planar, affine-projected surfaces.
 
-canvas.onpaint = () => { main(); };
-canvas.requestPaint();
-```
-
-**Insight:** The `inert` attribute is noteworthy — it disables hit testing for the HTML element since it's mapped onto a 3D surface where 2D hit testing doesn't make sense. For interactive 3D HTML, you'd need to do raycasting yourself and forward events.
+A separate experimental three.js integration lives at https://github.com/mrdoob/three.js/pull/31233 (`htmltexture` branch).
 
 ---
 
 ## 5. WebGPU Jelly Slider (webgpu-jelly-slider/)
 
-**What it demonstrates:** A range slider whose value is rendered as jelly-like 3D text on a ground plane, with physics simulation and ray marching — all using TypeGPU.
+**What it demonstrates:** A real `<input type="range">` drives a TypeGPU ray-marched jelly. The value `<div>` is uploaded as a GPU texture.
 
-**Key techniques:**
-- `copyElementImageToTexture()` for WebGPU
-- `canvas.requestPaint()` called on slider input
-- `<input type="range">` and `<div>` as canvas children
-- Physics-based Verlet integration for jelly animation
-- SDF ray marching for 3D rendering
-- CSS custom properties for theming (`--jelly-color`, etc.)
-- Respects `prefers-reduced-motion` and `prefers-contrast`
-- TypeGPU framework for WGSL shader generation
-
-**Pattern (WebGPU):**
-```js
-(canvas as any).onpaint = () => {
-  (root.device.queue as any).copyElementImageToTexture(
-    valueElement, width, height, { texture: valueRawTexture }
-  );
-  // Manual transform sync (getElementTransform TODO noted in source)
+```html
+<canvas content="drawable" layoutsubtree>
+  <input drawable id="slider" type="range" min="0" max="100" step="1" value="100" />
+  <div drawable id="value" inert="true"></div>
+</canvas>
+```
+```ts
+canvas.onpaint = () => {
+  try {
+    root.device.queue.drawElementImageToTexture(
+      { source: valueElement },
+      { texture: valueRawTexture, size: { width, height } });
+  } catch {
+    // old: copyElementImageToTexture({source}, {destination:{texture}, width, height})
+    // older: copyElementImageToTexture(el, width, height, {texture})
+  }
+  const t = new DOMMatrix().translate(x, y);           // hard-coded for now (TODO in source)
+  if (canvas.updateElementGeometry !== undefined) {
+    canvas.updateElementGeometry(valueElement,  { canvasTransform: t });
+    canvas.updateElementGeometry(sliderElement, { canvasTransform: t });
+  } else {
+    sliderElement.style.transform = valueElement.style.transform = `translate(${x}px, ${y}px)`;
+  }
 };
+canvas.requestPaint();
 ```
 
-**Insight:** Most complex example. Shows how HTML-in-Canvas enables mixing standard HTML controls (a range input) with advanced GPU rendering. The slider is a real `<input type="range">` — it's accessible, keyboard-navigable, and its value drives the 3D scene. The percentage text displayed on the ground plane is an HTML `<div>` captured as a GPU texture.
+**Insight:** It mixes a native accessible control with GPU rendering. `requestPaint()` is called on slider input. It respects `prefers-reduced-motion` and `prefers-contrast`.
 
 ---
 
 ## Pattern Summary
 
-| Example | Context | API Used | Interactive | Accessible |
-|---------|---------|----------|-------------|------------|
-| Complex Text | 2D | `drawElementImage` | No | Yes (text content) |
-| Pie Chart | 2D | `drawElementImage` | Yes (focus/tab) | Yes (ARIA roles) |
-| Text Input | 2D | `drawElementImage` | Yes (full form) | Yes (form elements) |
-| WebGL Cube | WebGL | `texElementImage2D` | No (inert) | No |
-| Jelly Slider | WebGPU | `copyElementImageToTexture` | Yes (range input) | Yes |
+| Example | Context | Draw API | Geometry sync | Interactive |
+|---------|---------|----------|---------------|-------------|
+| Complex Text | 2D | `drawElementImage` | automatic | links |
+| Pie Chart | 2D | `drawElementImage` | automatic | focus/tab |
+| Nested Sparkles | 2D | `drawElementImage` ×2 (nested) | automatic | n/a (animated) |
+| WebGL Card | WebGL2 | `texElementSubImage2D` | `updateElementGeometry` | yes (form, flip) |
+| Jelly Slider | WebGPU | `drawElementImageToTexture` | `updateElementGeometry` | yes (range input) |
 
-## Common Boilerplate
-
-Every example follows this pattern:
+## Common Boilerplate (2D)
 
 ```js
-// 1. Get context
 const ctx = canvas.getContext('2d');
 
-// 2. Handle paint events
 canvas.onpaint = () => {
-  ctx.reset();  // Clear and reset CTM
-  // ... draw elements ...
+  ctx.reset();
+  // ... ctx.drawElementImage(drawableEl, x, y) in canvas grid px ...
 };
 
-// 3. Request initial paint
-canvas.requestPaint();
+canvas.requestPaint(); // initial paint
 
-// 4. Handle DPR
 new ResizeObserver(([entry]) => {
   canvas.width = entry.devicePixelContentBoxSize[0].inlineSize;
   canvas.height = entry.devicePixelContentBoxSize[0].blockSize;
