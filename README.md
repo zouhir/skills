@@ -7,6 +7,7 @@ Personal [Claude Code](https://claude.com/claude-code) skills, symlinked into `~
 | Skill | Role | Typical trigger |
 |---|---|---|
 | **[html-in-canvas](html-in-canvas/)** | Consult the local WICG HTML-in-Canvas spec, then build with `<canvas layoutsubtree>` / `drawElementImage` / `onpaint` — reads the spec every time since the API is new and undocumented | "render HTML in a canvas", "replace html2canvas", "DOM as a WebGL texture" |
+| **[preact-app](preact-app/)** | Scaffold apps from a bundled snapshot of [preact-starter](https://github.com/zouhir/preact-starter) (`scripts/new-app.sh`) and apply its conventions — Preact + TS + Vite + Tailwind v4 + preact-iso + signals/AppModel | "start a new frontend app", "build a dashboard", adding routes/stores to a preact-starter app |
 
 ## Install
 

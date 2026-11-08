@@ -1,0 +1,84 @@
+# Preact Starter - LLM Context
+
+## Stack
+- Preact (not React) - use `class` not `className`
+- TypeScript
+- Vite
+- Tailwind CSS v4 (use `@import "tailwindcss"` syntax)
+- preact-iso for routing
+- @preact/signals for state
+
+## Project Structure
+```
+src/
+├── components/     # Reusable UI components (not created yet; add when needed)
+├── routes/         # Page components (one folder per route)
+├── store/          # State management
+├── app.tsx         # Router setup
+├── main.tsx        # Entry point with StoreProvider
+└── index.css       # Tailwind import
+```
+
+## Key Patterns
+
+### Components
+- Place in `src/components/ComponentName/index.tsx`
+- Style with Tailwind utility classes; don't add CSS modules or other styling systems
+
+### Routes
+- Place in `src/routes/RouteName/index.tsx` with a named export
+- Add route to `src/app.tsx` Router
+- Non-landing routes should be lazy-loaded with preact-iso's `lazy()` (see `NotFound` in `src/app.tsx`)
+
+### State Management
+Uses class-based AppModel with Preact Signals passed via context:
+
+```tsx
+// src/store/index.tsx
+export class AppModel {
+  readonly user = new UserStore()
+  // Pass only the dependencies a store needs, not the whole AppModel
+  readonly cart = new CartStore(this.user)
+}
+
+// Domain store with signals
+import { signal } from '@preact/signals'
+export class UserStore {
+  currentUser = signal<User | null>(null)
+  isLoading = signal(true)
+}
+
+// In components (useStore throws if used outside <StoreProvider>)
+import { useStore } from '../store'
+function MyComponent() {
+  const store = useStore()
+  return <div>{store.user.currentUser.value?.name}</div>
+}
+```
+
+### Routing (preact-iso)
+```tsx
+import { LocationProvider, ErrorBoundary, Router, Route, lazy } from 'preact-iso'
+const About = lazy(() => import('./routes/About').then((m) => m.About))
+
+<LocationProvider>
+  <ErrorBoundary>
+    <Router>
+      <Route path="/" component={Home} />
+      <Route path="/about" component={About} />
+      <Route default component={NotFound} />
+    </Router>
+  </ErrorBoundary>
+</LocationProvider>
+```
+
+## Commands
+- `npm run dev` - Start dev server
+- `npm run build` - Build for production
+- `npm run preview` - Preview production build
+
+## Notes
+- Preact uses `class` not `className`
+- Preact uses `for` not `htmlFor`
+- Import hooks from `preact/hooks`
+- Import signals from `@preact/signals`
